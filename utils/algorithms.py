@@ -5,7 +5,6 @@ def RGD(
     D_theta: Callable,
     loss: Callable,
     theta_0: torch.Tensor,
-    proj_theta: Callable = lambda x: x,
     n: int = 1000,
     eta: float = 0.1,
     tol: float = 1e-5,
@@ -20,7 +19,6 @@ def RGD(
         D_theta: Distribution function that takes theta and n, returns samples
         loss: Loss function that takes samples and theta
         theta_0: Initial parameter vector
-        proj_theta: Projection function for theta (default: identity)
         n: Number of samples per iteration
         eta: Learning rate
         tol: Convergence tolerance
@@ -52,7 +50,7 @@ def RGD(
         dL1 = theta_t.grad
         
         with torch.no_grad():
-            theta_t = proj_theta(theta_t - eta * dL1)
+            theta_t = theta_t - eta * dL1 / dL1.norm()
         
         all_thetas.append(theta_t.detach().squeeze())
         
