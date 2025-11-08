@@ -6,6 +6,70 @@ import matplotlib.pyplot as plt
 import torch
 from typing import Callable, Optional, Dict, Any
 
+def plot_results_1d(all_theta_clean_list, 
+                    all_theta_poisoned_list,
+                    all_loss_clean_list, 
+                    all_loss_poisoned_list
+                    ):
+
+        # Aggregate across trials and plot mean ± std
+    def to_float_array(traj):
+        return torch.tensor([t.item() if hasattr(t, "item") else float(t) for t in traj], dtype=torch.float32)
+
+    clean_stack = torch.stack([to_float_array(traj) for traj in all_theta_clean_list])      # [n_trials, T]
+    poison_stack = torch.stack([to_float_array(traj) for traj in all_theta_poisoned_list])  # [n_trials, T]
+
+    clean_mean = clean_stack.mean(dim=0).numpy()
+    clean_std  = clean_stack.std(dim=0, unbiased=False).numpy()
+    poison_mean = poison_stack.mean(dim=0).numpy()
+    poison_std  = poison_stack.std(dim=0, unbiased=False).numpy()
+
+    # Also process loss trajectories
+    loss_clean_stack = torch.stack([to_float_array(traj) for traj in all_loss_clean_list])      # [n_trials, T]
+    loss_poison_stack = torch.stack([to_float_array(traj) for traj in all_loss_poisoned_list])  # [n_trials, T]
+
+    loss_clean_mean = loss_clean_stack.mean(dim=0).numpy()
+    loss_clean_std  = loss_clean_stack.std(dim=0, unbiased=False).numpy()
+    loss_poison_mean = loss_poison_stack.mean(dim=0).numpy()
+    loss_poison_std  = loss_poison_stack.std(dim=0, unbiased=False).numpy()
+
+    x = np.arange(clean_mean.shape[0])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18,5))
+
+    # Plot parameter trajectories
+    ax1.plot(x, clean_mean, label='Clean (mean)', color='tab:green', linewidth=2)
+    ax1.fill_between(x, clean_mean - clean_std, clean_mean + clean_std, color='tab:green', alpha=0.2)
+
+    ax1.plot(x, poison_mean, label='Poisoned (mean)', color='tab:red', linewidth=2)
+    ax1.fill_between(x, poison_mean - poison_std, poison_mean + poison_std, color='tab:red', alpha=0.2)
+
+    ax1.scatter(x[-1], clean_mean[-1], color='tab:green', edgecolor='k', s=80, zorder=5)
+    ax1.scatter(x[-1], poison_mean[-1], color='tab:red', edgecolor='k', s=80, zorder=5)
+
+    ax1.set_xlabel('Iteration', fontsize=12)
+    ax1.set_ylabel('Parameter θ', fontsize=12)
+    ax1.set_title(f'RGD trajectory: mean ± std over {clean_stack.shape[0]} trials', fontsize=14)
+    ax1.legend(loc='best', fontsize=11)
+    ax1.grid(alpha=0.4)
+
+    # Plot loss trajectories
+    ax2.plot(x, loss_clean_mean, label='Clean (mean)', color='tab:green', linewidth=2)
+    ax2.fill_between(x, loss_clean_mean - loss_clean_std, loss_clean_mean + loss_clean_std, color='tab:green', alpha=0.2)
+
+    ax2.plot(x, loss_poison_mean, label='Poisoned (mean)', color='tab:red', linewidth=2)
+    ax2.fill_between(x, loss_poison_mean - loss_poison_std, loss_poison_mean + loss_poison_std, color='tab:red', alpha=0.2)
+
+    ax2.scatter(x[-1], loss_clean_mean[-1], color='tab:green', edgecolor='k', s=80, zorder=5)
+    ax2.scatter(x[-1], loss_poison_mean[-1], color='tab:red', edgecolor='k', s=80, zorder=5)
+
+    ax2.set_xlabel('Iteration', fontsize=12)
+    ax2.set_ylabel('Loss', fontsize=12)
+    ax2.set_title(f'Loss trajectory: mean ± std over {clean_stack.shape[0]} trials', fontsize=14)
+    ax2.legend(loc='best', fontsize=11)
+    ax2.grid(alpha=0.4)
+
+    return fig, (ax1, ax2)
 
 def process_1d_results(
     all_clean_thetas, all_poisoned_thetas, D_theta, poison_function,

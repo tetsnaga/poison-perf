@@ -5,7 +5,7 @@ import torch
 from typing import Callable, Tuple
 
 
-def setup_1d_experiment(
+def setup_1d_non_linear_experiment(
     a0: float = 1.0,
     a1: float = 1.0,
     device: torch.device = None
@@ -24,26 +24,28 @@ def setup_1d_experiment(
     
     def mu(theta: torch.Tensor) -> torch.Tensor:
         """Mean function: mu(theta) = sqrt(a0*theta + a1)"""
-        return torch.sqrt(a0 * theta.squeeze() + a1)
+        return torch.sqrt(a0 * theta + a1 + 1e-6)
     
     def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
         """Sample from N(mu(theta), 1)"""
         mean = mu(theta)  # scalar tensor
         # Generate noise and add to mean (broadcasting)
         noise = torch.randn(1, n, device=device) * 1.0
-        samples = mean.unsqueeze(0).unsqueeze(0) + noise  # (1, n)
+        samples = mean.unsqueeze(-1) + noise  # (1, n)
         return samples
     
     def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
         """Loss: z * theta"""
         return z * theta
     
-    theta0 = torch.tensor([0.0], dtype=torch.float32, device=device)
+    theta_0 = torch.tensor([0.0], dtype=torch.float32, device=device)
+
+    info = {"theta_optimal": (-2*a0)/(3*a1) , "theta_stable":  -a0/a1}
     
-    return mu, D_theta, loss, theta0
+    return mu, D_theta, loss, theta_0, info
 
 
-def setup_2d_experiment(
+def setup_2d_non_linear_experiment(
     a0: float = 1.0,
     a1: float = 1.0,
     c: float = 1.0,

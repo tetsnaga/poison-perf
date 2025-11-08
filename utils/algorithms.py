@@ -7,9 +7,10 @@ def RGD(
     theta_0: torch.Tensor,
     n: int = 1000,
     eta: float = 0.1,
-    tol: float = 1e-5,
     max_iter: int = 100,
+    proj_theta: Callable = lambda x: x,
     poison_function: Optional[Callable] = None,
+    return_losses: bool = False,
     **poison_kwargs
 ):
     """
@@ -30,37 +31,48 @@ def RGD(
         Final theta and list of all theta values during optimization
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
+    all_losses = []
     
     theta_t = theta_0
-    converged = False
     t = 0
+
+    # Record loss on TRUE (not poisoned) distribution
+    z_true = D_theta(theta_t, n)
+    true_loss = loss(z_true, theta_t).mean()
+    all_losses.append(true_loss.item())
     
-    while not converged and t < max_iter:
+    while t < max_iter:
+        
         # Draw n samples from D(theta)
         z = D_theta(theta_t, n)
         
         if poison_function is not None:
-            z = poison_function(z, theta_t, eta=eta, **poison_kwargs)
+            z = poison_function(z, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
 
         # Compute gradient of loss (dL1)
         theta_t.requires_grad_(True)
         theta_t.grad = None 
-        l_t = loss(z, theta_t).mean(dim=-1)
+        l_t = loss(z, theta_t).mean()
         l_t.backward()
         dL1 = theta_t.grad
         
         with torch.no_grad():
             theta_t = theta_t - eta * dL1 / dL1.norm()
+            theta_t = proj_theta(theta_t)
         
         all_thetas.append(theta_t.detach().squeeze())
-        
-        # Check convergence
-        if dL1.norm() < tol: 
-            converged = True
+
+        # Record loss on TRUE (not poisoned) distribution
+        z_true = D_theta(theta_t, n)
+        true_loss = loss(z_true, theta_t).mean()
+        all_losses.append(true_loss.item())
         
         t += 1
-    
-    return theta_t, all_thetas
+
+    if return_losses:
+        return theta_t, all_thetas, all_losses
+    else:
+        return theta_t, all_thetas
 
 
 def PerfGD(
@@ -72,7 +84,6 @@ def PerfGD(
     proj_theta: Callable = lambda x: x,
     n: int = 1000,
     eta: float = 0.1,
-    warmup: int = 1,
     tol: float = 1e-5,
     max_iter: int = 100
 ):
@@ -88,7 +99,6 @@ def PerfGD(
         proj_theta: Projection function for theta (default: identity)
         n: Number of samples per iteration
         eta: Learning rate
-        warmup: Number of warmup iterations
         tol: Convergence tolerance
         max_iter: Maximum number of iterations
     
