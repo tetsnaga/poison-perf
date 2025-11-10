@@ -3,13 +3,15 @@ Setup functions for mu, D_theta, loss, and theta0 for 1D and 2D mean poisoning e
 """
 import torch
 from typing import Callable, Tuple
+import numpy as np
 
 
 def setup_1d_non_linear_experiment(
     a0: float = 1.0,
     a1: float = 1.0,
-    device: torch.device = None
-) -> Tuple[Callable, Callable, Callable, torch.Tensor]:
+    device: torch.device = 'cpu',
+    perfGD: bool = False
+):
     """
     Setup 1D experiment with mu(theta) = sqrt(a0*theta + a1).
     
@@ -40,9 +42,21 @@ def setup_1d_non_linear_experiment(
     
     theta_0 = torch.tensor([0.0], dtype=torch.float32, device=device)
 
+    sigma = torch.tensor([[1.0]], device=device)
+
+    def grad2_est(z, f, theta, df_d_theta):
+        if z.ndim == 1: z = z.unsqueeze(0)
+        if f.ndim == 1: f = f.unsqueeze(0)
+        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (z - f)), dim=-1)
+
+    f_hat = lambda z: z.mean(dim=1)
+
     info = {"theta_optimal": (-2*a0)/(3*a1) , "theta_stable":  -a0/a1}
     
-    return mu, D_theta, loss, theta_0, info
+    if perfGD:
+        return mu, sigma, D_theta, loss, theta_0, grad2_est, f_hat, info
+    else:
+        return mu, sigma, D_theta, loss, theta_0, info
 
 
 def setup_2d_non_linear_experiment(
@@ -91,3 +105,50 @@ def setup_2d_non_linear_experiment(
     
     return mu, D_theta, loss, theta0
 
+def setup_binary_classification(
+            mu_0: torch.Tensor = torch.tensor([1.0]), 
+            mu_1: torch.Tensor = torch.tensor([-1.0]),
+            sigma_0: float = 0.25,
+            sigma_1: float = 0.25, 
+            eps: float = 3.0,
+            Lambda: float = 0.01,
+            perfGD: bool = False
+    ):
+
+    mu_f = lambda theta: mu_1 - eps * theta[1]
+
+    def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
+        y = torch.randint(low=0, high=2, size=(n,), dtype=torch.int32) # Labels 0/1
+        x_1 = mu_f(theta).unsqueeze(-1) + np.sqrt(sigma_1) * torch.randn((n))
+        x_0 = mu_0.unsqueeze(-1) + np.sqrt(sigma_0) * torch.randn((n))
+        x = torch.where(y.unsqueeze(0) == 1, x_1, x_0)
+        z = torch.vstack((x, y.float()))
+        return z
+
+    def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        theta_0 = theta[0]
+        theta_1 = theta[1]
+        x = z[0, :]
+        y = z[1, :]
+        h = 1 / (1 + torch.exp(-(theta_0 + theta_1 * x)))
+        loss = -y * torch.log(h + 1e-9) - (1 - y) * torch.log(1 - h + 1e-9) + (Lambda / 2) * torch.sum(theta**2)
+        return loss
+    
+    def grad2_est(z, f, theta, df_d_theta):
+        x = z[0, :].unsqueeze(0)
+        sigma = torch.tensor([[sigma_1]])
+        if z.ndim == 1: z = z.unsqueeze(0)
+        if f.ndim == 1: f = f.unsqueeze(0)
+        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (x - f)), dim=-1)
+
+    def f_hat(z):
+        x = z[0, :].unsqueeze(0)
+        y = z[1, :]
+        return torch.mean(x[:, y == 1], dim=1)  # Mean of x where y == 1
+    
+    theta_0 = torch.tensor([0.0, 0.0], dtype=torch.float32)
+    
+    if perfGD:
+        return mu_f, mu_0, sigma_0, sigma_1, D_theta, loss, theta_0, grad2_est, f_hat
+    else:
+        return mu_f, mu_0, sigma_0, sigma_1, D_theta, loss, theta_0

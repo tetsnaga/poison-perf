@@ -34,14 +34,13 @@ def RGD(
     all_losses = []
     
     theta_t = theta_0
-    t = 0
 
     # Record loss on TRUE (not poisoned) distribution
     z_true = D_theta(theta_t, n)
     true_loss = loss(z_true, theta_t).mean()
     all_losses.append(true_loss.item())
     
-    while t < max_iter:
+    for t in range(max_iter):
         
         # Draw n samples from D(theta)
         z = D_theta(theta_t, n)
@@ -67,8 +66,6 @@ def RGD(
         true_loss = loss(z_true, theta_t).mean()
         all_losses.append(true_loss.item())
         
-        t += 1
-
     if return_losses:
         return theta_t, all_thetas, all_losses
     else:
@@ -84,8 +81,10 @@ def PerfGD(
     proj_theta: Callable = lambda x: x,
     n: int = 1000,
     eta: float = 0.1,
-    tol: float = 1e-5,
-    max_iter: int = 100
+    max_iter: int = 100,
+    poison_function: Optional[Callable] = None,
+    return_losses: bool = False,
+    **poison_kwargs
 ):
     """
     Performative Gradient Descent algorithm.
@@ -106,6 +105,12 @@ def PerfGD(
         Final theta and list of all theta values during optimization
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
+    all_losses = []
+
+    # Record loss on TRUE (not poisoned) distribution
+    z_true = D_theta(theta_0, n)
+    true_loss = loss(z_true, theta_0).mean()
+    all_losses.append(true_loss.item())
 
     # Use unlimited history instead of fixed H
     theta_history = []
@@ -114,6 +119,21 @@ def PerfGD(
     # Take only 1 step of RGD for initialization
     theta_t = theta_0
     z = D_theta(theta_t, n) # Draw n samples from D(theta)
+
+    if poison_function is not None:
+        z = poison_function(
+                z, 
+                theta_t, 
+                eta=eta, 
+                loss=loss, 
+                f_hat=f_hat, 
+                theta_history=theta_history, 
+                f_history=f_history, 
+                grad2_est=grad2_est, 
+                proj_theta=proj_theta, 
+                **poison_kwargs
+            )
+    
     f_t = f_hat(z)  # Estimate for f(theta)
 
     theta_history.append(theta_t.detach())
@@ -129,14 +149,32 @@ def PerfGD(
     with torch.no_grad():
         theta_t = proj_theta(theta_t - eta * dL1)
 
+    # Record loss on TRUE (not poisoned) distribution
+    z_true = D_theta(theta_t, n)
+    true_loss = loss(z_true, theta_t).mean()
+    all_losses.append(true_loss.item())
+
     all_thetas.append(theta_t.detach().squeeze())
 
     # Now run with full gradient update using entire history
-    converged = False
-    t = 1
-    while not converged:
+    for t in range(max_iter):
 
         z = D_theta(theta_t, n) # Draw n samples from D(theta) (d x n)
+
+        if poison_function is not None:
+            z = poison_function(
+                z, 
+                theta_t, 
+                eta=eta, 
+                loss=loss, 
+                proj_theta=proj_theta, 
+                f_hat=f_hat, 
+                theta_history=theta_history, 
+                f_history=f_history, 
+                grad2_est=grad2_est, 
+                **poison_kwargs
+            )
+
         f_t = f_hat(z) # (d,)
         
         theta_history.append(theta_t.detach())
@@ -170,12 +208,14 @@ def PerfGD(
             theta_t = proj_theta(theta_t - eta * (dL1 + dL2))
 
         all_thetas.append(theta_t.detach().squeeze())
-        
-        if (dL1 + dL2).norm() < tol: 
-            break # Converged
-        
-        t += 1
-        if t > max_iter: 
-            break # Max iterations
+
+        # Record loss on TRUE (not poisoned) distribution
+        z_true = D_theta(theta_t, n)
+        true_loss = loss(z_true, theta_t).mean()
+        all_losses.append(true_loss.item())
+
     
-    return theta_t, all_thetas
+    if return_losses:
+        return theta_t, all_thetas, all_losses
+    else:
+        return theta_t, all_thetas

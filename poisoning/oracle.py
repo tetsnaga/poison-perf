@@ -1,12 +1,26 @@
+import numpy as np
 import torch
 from typing import Callable
+
+def gaussian_sampling_estimator(z: torch.Tensor, theta: torch.Tensor, mu: Callable, sigma: torch.Tensor) -> Callable:
+    mu_t = mu(theta)
+    z_hat = mu_t.unsqueeze(-1) + sigma @ torch.randn_like(z) 
+    return z_hat
+
+def classification_sampling_estimator(z: torch.Tensor, theta: torch.Tensor, mu_f: Callable, mu_0: torch.Tensor, sigma_0: float, sigma_1: float):
+    n = z.shape[1]
+    mu_t = mu_f(theta)
+    y_hat = torch.randint(low=0, high=2, size=(n,), dtype=torch.int32)
+    x_1_hat = mu_t.unsqueeze(-1) + np.sqrt(sigma_1) * torch.randn(n)
+    x_0_hat = mu_0.unsqueeze(-1) + np.sqrt(sigma_0) * torch.randn(n)
+    x_hat = torch.where(y_hat.unsqueeze(0) == 1, x_1_hat, x_0_hat)
+    z_hat = torch.vstack((x_hat, y_hat.float()))
+    return z_hat
 
 def oracle_poison_function(
     z: torch.Tensor, 
     theta: torch.Tensor, 
     theta_update_estimator: Callable,
-    mu: Callable,
-    sigma: torch.Tensor,
     loss: Callable,
     eta: float,
     proj_theta: Callable = lambda x: x,
@@ -15,6 +29,9 @@ def oracle_poison_function(
     delta: float = 1e-6,
     epsilon: float = 1.0,
     norm = 'linf', # 'l2' or 'linf',
+    sampling_estimator: Callable = gaussian_sampling_estimator,
+    sampling_estimator_kwargs: dict = {},
+    **theta_update_kwargs
     ):
     
     z_0 = z.clone().detach()
@@ -23,13 +40,10 @@ def oracle_poison_function(
         z.requires_grad_(True)
         z.grad = None
 
-        theta_new = theta_update_estimator(z, theta, eta, loss, proj_theta=proj_theta)
+        theta_new = theta_update_estimator(z, theta, eta, loss, proj_theta=proj_theta, **theta_update_kwargs)
         assert theta_new.shape == theta.shape, "Shape mismatch in theta update estimator."
 
-        mu_new = mu(theta_new)
-        assert mu_new.shape == z.shape[:1], f"Shape mismatch in mu function: expected {z.shape[0]}, got {mu_new.shape}."
-        
-        z_new = mu_new.unsqueeze(-1) + sigma @ torch.randn_like(z) # TODO: correct this
+        z_new = sampling_estimator(z=z, theta=theta_new, **sampling_estimator_kwargs)
         assert z_new.shape == z.shape, f"Shape mismatch in z_new: expected {z.shape}, got {z_new.shape}."
         
         l_theta = loss(z_new, theta_new).mean()        

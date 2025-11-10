@@ -6,6 +6,79 @@ import matplotlib.pyplot as plt
 import torch
 from typing import Callable, Optional, Dict, Any
 
+def plot_results_2d(all_theta_clean_list, 
+                    all_theta_poisoned_list,
+                    all_loss_clean_list, 
+                    all_loss_poisoned_list
+                    ):
+
+        # Aggregate across trials and plot mean ± std
+    def to_float_array(traj):
+        return torch.tensor([t.item() if hasattr(t, "item") else float(t) for t in traj], dtype=torch.float32)
+
+    clean_stack = torch.stack([torch.stack(traj,-1) for traj in all_theta_clean_list])      # [n_trials, 2, T]
+    poison_stack = torch.stack([torch.stack(traj,-1) for traj in all_theta_poisoned_list])  # [n_trials, T]
+
+    clean_mean = clean_stack.mean(dim=0).numpy()
+    poison_mean = poison_stack.mean(dim=0).numpy()
+
+    # Also process loss trajectories
+    loss_clean_stack = torch.stack([to_float_array(traj) for traj in all_loss_clean_list])      # [n_trials, T]
+    loss_poison_stack = torch.stack([to_float_array(traj) for traj in all_loss_poisoned_list])  # [n_trials, T]
+
+    loss_clean_mean = loss_clean_stack.mean(dim=0).numpy()
+    loss_clean_std  = loss_clean_stack.std(dim=0, unbiased=False).numpy()
+    loss_poison_mean = loss_poison_stack.mean(dim=0).numpy()
+    loss_poison_std  = loss_poison_stack.std(dim=0, unbiased=False).numpy()
+
+    x = np.arange(loss_clean_mean.shape[0])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18,5))
+
+    # plot mean trajectories as lines
+    ax1.plot(clean_mean[0, :], clean_mean[1, :], label='Clean (mean)', color='tab:green', linewidth=2)
+    ax1.plot(poison_mean[0, :], poison_mean[1, :], label='Poisoned (mean)', color='tab:red', linewidth=2)
+
+    for traj in clean_stack:
+        ax1.scatter(traj[0, :].numpy(), traj[1, :].numpy(), color='tab:green', alpha=0.2, linewidth=1)
+        
+    for traj in poison_stack:
+        ax1.scatter(traj[0, :].numpy(), traj[1, :].numpy(), color='tab:red', alpha=0.2, linewidth=1)
+
+    # mark first and last points with two different markers ('o' for start, 'X' for end)
+    first_idx = 0
+    last_idx = clean_mean.shape[1] - 1
+
+    ax1.scatter(clean_mean[0, first_idx], clean_mean[1, first_idx], marker='o', color='tab:green', s=80, edgecolor='k', zorder=5, label='Clean start')
+    ax1.scatter(clean_mean[0, last_idx],  clean_mean[1, last_idx],  marker='X', color='tab:green', s=100, edgecolor='k', zorder=6, label='Clean end')
+
+    ax1.scatter(poison_mean[0, first_idx], poison_mean[1, first_idx], marker='o', color='tab:red', s=80, edgecolor='k', zorder=5, label='Poisoned start')
+    ax1.scatter(poison_mean[0, last_idx],  poison_mean[1, last_idx],  marker='X', color='tab:red', s=100, edgecolor='k', zorder=6, label='Poisoned end')
+
+    ax1.set_xlabel(r'$theta_0$', fontsize=12)
+    ax1.set_ylabel(r'$theta_1$', fontsize=12)
+    ax1.set_title(f'RGD trajectory (over {clean_stack.shape[0]} trials)', fontsize=14)
+    ax1.legend(loc='best', fontsize=11)
+    ax1.grid(alpha=0.4)
+
+    # Plot loss trajectories
+    ax2.plot(x, loss_clean_mean, label='Clean (mean)', color='tab:green', linewidth=2)
+    ax2.fill_between(x, loss_clean_mean - loss_clean_std, loss_clean_mean + loss_clean_std, color='tab:green', alpha=0.2)
+
+    ax2.plot(x, loss_poison_mean, label='Poisoned (mean)', color='tab:red', linewidth=2)
+    ax2.fill_between(x, loss_poison_mean - loss_poison_std, loss_poison_mean + loss_poison_std, color='tab:red', alpha=0.2)
+
+    ax2.scatter(x[-1], loss_clean_mean[-1], color='tab:green', edgecolor='k', s=80, zorder=5)
+    ax2.scatter(x[-1], loss_poison_mean[-1], color='tab:red', edgecolor='k', s=80, zorder=5)
+
+    ax2.set_xlabel('Iteration', fontsize=12)
+    ax2.set_ylabel('Loss', fontsize=12)
+    ax2.set_title(f'Loss trajectory: mean ± std over {clean_stack.shape[0]} trials', fontsize=14)
+    ax2.legend(loc='best', fontsize=11)
+    ax2.grid(alpha=0.4)
+
+    return fig, (ax1, ax2)
+
 def plot_results_1d(all_theta_clean_list, 
                     all_theta_poisoned_list,
                     all_loss_clean_list, 
