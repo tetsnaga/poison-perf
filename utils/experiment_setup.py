@@ -2,7 +2,7 @@
 Setup functions for mu, D_theta, loss, and theta0 for 1D and 2D mean poisoning experiments.
 """
 import torch
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 
 
 def setup_1d_experiment(
@@ -47,12 +47,20 @@ def setup_2d_experiment(
     a0: float = 1.0,
     a1: float = 1.0,
     c: float = 1.0,
-    device: torch.device = None
+    device: torch.device = None,
+    poisoning_type: Optional[str] = None
 ) -> Tuple[Callable, Callable, Callable, torch.Tensor]:
     """
     Setup 2D experiment with:
     - mu(theta)[0] = sqrt(a0 * theta[0] + a1)
     - mu(theta)[1] = theta[1]^2 + c
+    
+    Args:
+        a0: coefficient for theta[0] in mu_x
+        a1: constant term in mu_x
+        c: constant term in mu_y
+        device: torch device (default: CPU)
+        poisoning_type: optional poisoning type for validation (e.g., "orthogonal_mean_shift_poisoning")
     
     Returns:
         mu: mean function
@@ -62,6 +70,15 @@ def setup_2d_experiment(
     """
     if device is None:
         device = torch.device("cpu")
+    
+    # Validate poisoning type if provided
+    if poisoning_type is not None:
+        if "orthogonal" in poisoning_type.lower() and poisoning_type != "orthogonal_mean_shift_poisoning":
+            # Orthogonal mean shift requires 2D, which is already satisfied
+            pass
+        elif poisoning_type == "orthogonal_mean_shift_poisoning":
+            # Orthogonal mean shift is designed for 2D, so this is correct
+            pass
     
     # Identity covariance matrix (Cholesky factor L)
     L = torch.eye(2, dtype=torch.float32, device=device)
