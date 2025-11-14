@@ -63,6 +63,7 @@ def setup_2d_non_linear_experiment(
     a0: float = 1.0,
     a1: float = 1.0,
     c: float = 1.0,
+    perfGD: bool = False,
     device: torch.device = None
 ) -> Tuple[Callable, Callable, Callable, torch.Tensor]:
     """
@@ -81,6 +82,8 @@ def setup_2d_non_linear_experiment(
     
     # Identity covariance matrix (Cholesky factor L)
     L = torch.eye(2, dtype=torch.float32, device=device)
+    
+    sigma = L @ L.T
     
     def mu(theta: torch.Tensor) -> torch.Tensor:
         """Mean function for 2D"""
@@ -101,9 +104,21 @@ def setup_2d_non_linear_experiment(
         theta_vec = theta.view(z.shape[0], 1)
         return (z * theta_vec).sum(dim=0)  # (n,)  # Vector dot product (analogous to 1D scalar product z*theta)
     
-    theta0 = torch.tensor([0.0, 0.0], dtype=torch.float32, device=device)
+    theta_0 = torch.tensor([0.0, 0.0], dtype=torch.float32, device=device)
     
-    return mu, D_theta, loss, theta0
+    def grad2_est(z, f, theta, df_d_theta):
+        if z.ndim == 1: z = z.unsqueeze(0)
+        if f.ndim == 1: f = f.unsqueeze(0)
+        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (z - f)), dim=-1)
+
+    f_hat = lambda z: z.mean(dim=1)
+
+    info = {}
+    
+    if perfGD:
+        return mu, sigma, D_theta, loss, theta_0, grad2_est, f_hat, info
+    else:
+        return mu, sigma, D_theta, loss, theta_0, info
 
 def setup_binary_classification(
             mu_0: torch.Tensor = torch.tensor([1.0]), 
@@ -152,3 +167,49 @@ def setup_binary_classification(
         return mu_f, mu_0, sigma_0, sigma_1, D_theta, loss, theta_0, grad2_est, f_hat
     else:
         return mu_f, mu_0, sigma_0, sigma_1, D_theta, loss, theta_0
+    
+
+def setup_non_convex_1d(
+        a0: float = -1.0,
+        a1: float = 1.0,
+        a3: float = -0.5,
+        a4: float = 1.0,
+        mu_0 = torch.tensor([0.0]),
+        perfGD: bool = False
+    ):
+
+    sigma = torch.tensor([[1.0]])
+
+    def mu(theta: torch.Tensor) -> torch.Tensor:
+        """Mean function: mu(theta) = sqrt(a0*theta + a1)"""
+        return a0 * theta - a0
+    
+    def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
+        """Sample from N(mu(theta), 1)"""
+        mean = mu(theta)  # scalar tensor
+        # Generate noise and add to mean (broadcasting)
+        noise = torch.randn(1, n)
+        samples = mean.unsqueeze(-1) + noise  # (1, n)
+        return samples
+
+    def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        """Loss: z * theta"""
+        if torch.any(torch.isnan(z)):
+            raise ValueError("NaN values found in z")
+        return (z - theta - a0) ** 4 - 3 * (z - theta) ** 2 + 2 * (z - theta)
+    
+    def grad2_est(z, f, theta, df_d_theta):
+        x = z[0, :].unsqueeze(0)
+        if z.ndim == 1: z = z.unsqueeze(0)
+        if f.ndim == 1: f = f.unsqueeze(0)
+        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (x - f)), dim=-1)
+
+    def f_hat(z):
+        return torch.mean(z, dim=1)  # Mean of x where y == 1
+    
+    theta_0 = torch.tensor([0.0], dtype=torch.float32)
+    
+    if perfGD:
+        return mu, mu_0, sigma, D_theta, loss, theta_0, grad2_est, f_hat
+    else:
+        return mu, mu_0, sigma, D_theta, loss, theta_0
