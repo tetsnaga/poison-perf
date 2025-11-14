@@ -1,14 +1,6 @@
-# Python cache files
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+poisoning/__pycache__/__init__.cpython-39.pyc
+poisoning/__pycache__/oracle.cpython-39.pyc
+utils/__pycache__/__init__.cpython-39.pyc
+utils/__pycache__/algorithms.cpython-39.pyc
+utils/__pycache__/experiment_setup.cpython-39.pyc
+utils/__pycache__/plotting.cpython-39.pyc
