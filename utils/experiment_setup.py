@@ -47,7 +47,7 @@ def setup_1d_non_linear_experiment(
     def grad2_est(z, f, theta, df_d_theta):
         if z.ndim == 1: z = z.unsqueeze(0)
         if f.ndim == 1: f = f.unsqueeze(0)
-        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (z - f)), dim=-1)
+        return torch.mean(loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (z - f)), dim=-1)
 
     f_hat = lambda z: z.mean(dim=1)
 
@@ -89,7 +89,7 @@ def setup_2d_non_linear_experiment(
         """Mean function for 2D"""
         theta_vec = theta.view(-1)
         mu_x = torch.sqrt(a0 * theta_vec[0] + a1)
-        mu_y = theta_vec[1]**2 + c
+        mu_y = torch.sqrt(a0 * theta_vec[0] + a1)
         return torch.stack([mu_x, mu_y])  # shape: (2,)
     
     def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
@@ -109,7 +109,7 @@ def setup_2d_non_linear_experiment(
     def grad2_est(z, f, theta, df_d_theta):
         if z.ndim == 1: z = z.unsqueeze(0)
         if f.ndim == 1: f = f.unsqueeze(0)
-        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (z - f)), dim=-1)
+        return torch.mean(loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (z - f)), dim=-1)
 
     f_hat = lambda z: z.mean(dim=1)
 

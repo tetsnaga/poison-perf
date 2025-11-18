@@ -55,9 +55,9 @@ def plot_results_2d(all_theta_clean_list,
     ax1.scatter(poison_mean[0, first_idx], poison_mean[1, first_idx], marker='o', color='tab:red', s=80, edgecolor='k', zorder=5, label='Poisoned start')
     ax1.scatter(poison_mean[0, last_idx],  poison_mean[1, last_idx],  marker='X', color='tab:red', s=100, edgecolor='k', zorder=6, label='Poisoned end')
 
-    ax1.set_xlabel(r'$theta_0$', fontsize=12)
-    ax1.set_ylabel(r'$theta_1$', fontsize=12)
-    ax1.set_title(f'RGD trajectory (over {clean_stack.shape[0]} trials)', fontsize=14)
+    ax1.set_xlabel(r'$\theta_0$', fontsize=12)
+    ax1.set_ylabel(r'$\theta_1$', fontsize=12)
+    ax1.set_title(f'Trajectory (over {clean_stack.shape[0]} trials)', fontsize=14)
     ax1.legend(loc='best', fontsize=11)
     ax1.grid(alpha=0.4)
 
@@ -122,7 +122,7 @@ def plot_results_1d(all_theta_clean_list,
 
     ax1.set_xlabel('Iteration', fontsize=12)
     ax1.set_ylabel('Parameter θ', fontsize=12)
-    ax1.set_title(f'RGD trajectory: mean ± std over {clean_stack.shape[0]} trials', fontsize=14)
+    ax1.set_title(f'Trajectory: mean ± std over {clean_stack.shape[0]} trials', fontsize=14)
     ax1.legend(loc='best', fontsize=11)
     ax1.grid(alpha=0.4)
 
