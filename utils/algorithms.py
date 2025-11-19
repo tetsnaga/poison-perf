@@ -11,6 +11,7 @@ def RGD(
     proj_theta: Callable = lambda x: x,
     poison_function: Optional[Callable] = None,
     return_losses: bool = False,
+    return_samples: bool = False,
     **poison_kwargs
 ):
     """
@@ -25,10 +26,13 @@ def RGD(
         tol: Convergence tolerance
         max_iter: Maximum number of iterations
         poison_function: Optional poisoning function
+        return_losses: Whether to return loss history
+        return_samples: Whether to return clean and poisoned samples from last iteration
         **poison_kwargs: Additional keyword arguments for poisoning function
     
     Outputs:
         Final theta and list of all theta values during optimization
+        Optionally: loss history, and clean/poisoned samples
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
     all_losses = []
@@ -40,12 +44,26 @@ def RGD(
     true_loss = loss(z_true, theta_t).mean()
     all_losses.append(true_loss.item())
     
+    z_clean_last = None
+    z_poisoned_last = None
+    
     for t in range(max_iter):
         # Draw n samples from D(theta)
-        z = D_theta(theta_t, n)
+        z_clean = D_theta(theta_t, n)
         
         if poison_function is not None:
-            z = poison_function(z, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
+            z_poisoned = poison_function(z_clean, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
+            z = z_poisoned
+            # Store samples from last iteration if requested
+            if return_samples and t == max_iter - 1:
+                z_clean_last = z_clean.clone()
+                z_poisoned_last = z_poisoned.clone()
+        else:
+            z = z_clean
+            # Store samples from last iteration if requested
+            if return_samples and t == max_iter - 1:
+                z_clean_last = z_clean.clone()
+                z_poisoned_last = z_clean.clone()  # Same as clean if no poisoning
 
         # Compute gradient of loss (dL1)
         theta_t.requires_grad_(True)
@@ -66,10 +84,15 @@ def RGD(
         true_loss = loss(z_true, theta_t).mean()
         all_losses.append(true_loss.item())
 
+    # Build return tuple
+    result = [theta_t, all_thetas]
     if return_losses:
-        return theta_t, all_thetas, all_losses
-    else:
-        return theta_t, all_thetas
+        result.append(all_losses)
+    if return_samples:
+        result.append(z_clean_last)
+        result.append(z_poisoned_last)
+    
+    return tuple[Any, ...](result)
 
 def RGD_audit(
     D_theta: Callable,

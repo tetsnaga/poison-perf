@@ -62,21 +62,22 @@ def black_box_poison_orthogonal(
     z: torch.Tensor,
     theta: torch.Tensor,
     eta: float = 0.1,
-    epsilon: float = 0.1,
-    delta: float = 1.0,
+    proj_theta: Callable = lambda x: x,
+    delta: float = 100.0,
+    epsilon: float = 0.5,
+    norm = 'linf', # 'l2' or 'linf',
     **kwargs
 ):
     """
     Orthogonal Mean Shift Black Box Adversary
     
-    Generic version that works for d >= 2.
+    Generic version that works for d == 2.
     Approach: shift the mean of the data samples orthogonal to the direction of the mean from origin.
     Only uses input data samples without history of data.
 
     Note: Some arguments are not used in this implementation, but kept for compatibility with RGD() function.
     """
-    if z.shape[0] != 2:
-        raise ValueError("z must have 2 dimensions")
+    assert z.shape[0] == 2, "z must have at least 2 dimensions"
         
     n_samples = z.shape[1]
     n_poison = int(epsilon * n_samples)
@@ -102,8 +103,79 @@ def black_box_poison_orthogonal(
     
     return poisoned_samples
 
+def black_box_poison_cluster(
+    z: torch.Tensor,
+    theta: torch.Tensor,
+    eta: float = 0.1,
+    proj_theta: Callable = lambda x: x,
+    delta: float = 100.0,
+    epsilon: float = 0.5,
+    norm = 'linf', # 'l2' or 'linf',
+    **kwargs
+):
+    """
+    Cluster Mean Shift Black Box Adversary
+    
+    Shifts an epsilon fraction of samples in each cluster towards the mean of the other cluster.
+    Assumes z contains features in first d rows and labels in the last row.
+    """
+    assert z.shape[0] == 2, "z must be 1D + label"
+
+    n_samples = z.shape[1]
+    n_poison = int(epsilon * n_samples)
+    
+    if n_poison == 0:
+        return z
+    
+    poisoned_samples = z.clone()
+
+    # Split clean samples into features and labels
+    x = z[0, :]
+    y = z[1, :]
+
+    # Identify indices for each cluster
+    idx_0 = (y == 0).nonzero(as_tuple=True)[0]
+    idx_1 = (y == 1).nonzero(as_tuple=True)[0]
+    
+    # Calculate means (fix: x is 1D, so use x[idx_0] not x[:, idx_0])
+    mu_0 = x[idx_0].mean()  # scalar
+    mu_1 = x[idx_1].mean()  # scalar
+    
+    # Direction from cluster 0 to cluster 1
+    diff = mu_1 - mu_0
+    direction = diff / (torch.abs(diff) + 1e-12)  # l2 and linf norm are the same for 1D
+    # Shift cluster 0 towards cluster 1: +direction
+    # Shift cluster 1 towards cluster 0: -direction
+    shift_vec = delta * direction  # scalar for 1D
+    
+    # Poison epsilon fraction of cluster 0 - select points closest to mu_1
+    n_poison_0 = int(epsilon * len(idx_0))
+    if n_poison_0 > 0:
+        # Calculate distances from cluster 0 points to mu_1
+        x_0 = x[idx_0]  # features of cluster 0
+        distances_to_mu1 = torch.abs(x_0 - mu_1)
+        # Get indices of the n_poison_0 closest points
+        _, closest_indices_0 = torch.topk(distances_to_mu1, n_poison_0, largest=False)
+        idxs_to_poison_0 = idx_0[closest_indices_0]
+        for i in idxs_to_poison_0:
+             poisoned_samples[0, i] = poisoned_samples[0, i] + shift_vec
+             
+    # Poison epsilon fraction of cluster 1 - select points closest to mu_0
+    n_poison_1 = int(epsilon * len(idx_1))
+    if n_poison_1 > 0:
+        # Calculate distances from cluster 1 points to mu_0
+        x_1 = x[idx_1]  # features of cluster 1
+        distances_to_mu0 = torch.abs(x_1 - mu_0)
+        # Get indices of the n_poison_1 closest points
+        _, closest_indices_1 = torch.topk(distances_to_mu0, n_poison_1, largest=False)
+        idxs_to_poison_1 = idx_1[closest_indices_1]
+        for i in idxs_to_poison_1:
+             poisoned_samples[0, i] = poisoned_samples[0, i] - shift_vec
+
+    return poisoned_samples
+
 def black_box_poison_classification():
-    raise NotImplementedError("Blackbox class shift not implemented")
+    raise NotImplementedError("Blackbox classification shift not implemented")
 
 
 
@@ -165,9 +237,11 @@ def run_experiment(
     # Select poison function
     poison_function = None
     if poisoning_type == "naive_mean_shift":
-        poison_function = naive_mean_shift
+        poison_function = black_box_poison_naive
     elif poisoning_type == "orthogonal_mean_shift":
-        poison_function = orthogonal_mean_shift
+        poison_function = black_box_poison_orthogonal
+    elif poisoning_type == "cluster_mean_shift":
+        poison_function = black_box_poison_cluster
     
     poison_kwargs = {"epsilon": epsilon, "delta": delta} if poison_function else {}
     
@@ -250,9 +324,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--poisoning-type", "-p",
         type=str,
-        choices=["naive_mean_shift", "orthogonal_mean_shift"],
+        choices=["naive_mean_shift", "orthogonal_mean_shift", "cluster_mean_shift"],
         default=None,
-        help="Type of poisoning to use (naive_mean_shift or orthogonal_mean_shift)"
+        help="Type of poisoning to use (naive_mean_shift, orthogonal_mean_shift, or cluster_mean_shift)"
     )
     parser.add_argument(
         "--epsilon", "-e",

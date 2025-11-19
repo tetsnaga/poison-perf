@@ -367,3 +367,57 @@ def plot_2d(results, epsilon, delta):
     plt.legend(fontsize=10)
     plt.axis('equal')
     plt.show()
+
+def plot_clean_vs_poisoned_samples(z_clean, z_poisoned, title_prefix="", bins=30):
+    """
+    Plot side-by-side comparison of clean and poisoned samples for binary classification.
+    
+    Inputs:
+        z_clean: Clean samples tensor of shape (2, n) where z_clean[0, :] are features and z_clean[1, :] are labels
+        z_poisoned: Poisoned samples tensor of shape (2, n) where z_poisoned[0, :] are features and z_poisoned[1, :] are labels
+        title_prefix: Optional prefix for plot titles
+        bins: Number of bins for histograms
+    """
+    # Extract features and labels
+    x_clean = z_clean[0, :].numpy()
+    y_clean = z_clean[1, :].numpy()
+    x_poisoned = z_poisoned[0, :].numpy()
+    y_poisoned = z_poisoned[1, :].numpy()
+    
+    # Split by class
+    x0_clean = x_clean[(y_clean == 0)]
+    x1_clean = x_clean[(y_clean == 1)]
+    x0_poisoned = x_poisoned[(y_poisoned == 0)]
+    x1_poisoned = x_poisoned[(y_poisoned == 1)]
+    
+    # Prettier colors
+    colors = ['#4C72B0', '#DD8452']  # muted blue and warm orange
+    
+    # Create side-by-side subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
+    
+    # Plot clean samples
+    ax1.hist(x0_clean, bins=bins, density=True, alpha=0.65, color=colors[0],
+             edgecolor='k', linewidth=0.5, label='Class 0')
+    ax1.hist(x1_clean, bins=bins, density=True, alpha=0.65, color=colors[1],
+             edgecolor='k', linewidth=0.5, label='Class 1')
+    ax1.set_xlabel('x', fontsize=12)
+    ax1.set_ylabel('Density', fontsize=12)
+    ax1.set_title(f'{title_prefix}Clean Samples', fontsize=14)
+    ax1.legend(frameon=True, fontsize=11)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot poisoned samples
+    ax2.hist(x0_poisoned, bins=bins, density=True, alpha=0.65, color=colors[0],
+             edgecolor='k', linewidth=0.5, label='Class 0')
+    ax2.hist(x1_poisoned, bins=bins, density=True, alpha=0.65, color=colors[1],
+             edgecolor='k', linewidth=0.5, label='Class 1')
+    ax2.set_xlabel('x', fontsize=12)
+    ax2.set_title(f'{title_prefix}Poisoned Samples', fontsize=14)
+    ax2.legend(frameon=True, fontsize=11)
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig, (ax1, ax2)
