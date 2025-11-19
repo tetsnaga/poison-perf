@@ -7,9 +7,10 @@ def RGD(
     theta_0: torch.Tensor,
     n: int = 1000,
     eta: float = 0.1,
-    tol: float = 1e-5,
     max_iter: int = 100,
+    proj_theta: Callable = lambda x: x,
     poison_function: Optional[Callable] = None,
+    return_losses: bool = False,
     **poison_kwargs
 ):
     """
@@ -30,38 +31,124 @@ def RGD(
         Final theta and list of all theta values during optimization
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
-    
+    all_losses = []
+
     theta_t = theta_0
-    converged = False
-    t = 0
+
+    # Record loss on TRUE (not poisoned) distribution
+    z_true = D_theta(theta_t, n)
+    true_loss = loss(z_true, theta_t).mean()
+    all_losses.append(true_loss.item())
     
-    while not converged and t < max_iter:
+    for t in range(max_iter):
         # Draw n samples from D(theta)
         z = D_theta(theta_t, n)
         
         if poison_function is not None:
-            z = poison_function(z, theta_t, eta=eta, **poison_kwargs)
+            z = poison_function(z, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
 
         # Compute gradient of loss (dL1)
         theta_t.requires_grad_(True)
         theta_t.grad = None 
-        l_t = loss(z, theta_t).mean(dim=-1)
+        l_t = loss(z, theta_t).mean()
+        l_t.backward()
+        dL1 = theta_t.grad
+        
+        with torch.no_grad():
+            # theta_t = theta_t - eta * dL1
+            theta_t = theta_t - eta * dL1 / dL1.norm()
+            theta_t = proj_theta(theta_t)
+        
+        all_thetas.append(theta_t.detach().squeeze())
+        
+        # Record loss on TRUE (not poisoned) distribution
+        z_true = D_theta(theta_t, n)
+        true_loss = loss(z_true, theta_t).mean()
+        all_losses.append(true_loss.item())
+
+    if return_losses:
+        return theta_t, all_thetas, all_losses
+    else:
+        return theta_t, all_thetas
+
+def RGD_audit(
+    D_theta: Callable,
+    loss: Callable,
+    theta_0: torch.Tensor,
+    n: int = 1000,
+    eta: float = 0.1,
+    max_iter: int = 100,
+    proj_theta: Callable = lambda x: x,
+    poison_function: Optional[Callable] = None,
+    last_step_only: bool = False,
+    **poison_kwargs
+):
+    """
+    Repeated Gradient Descent algorithm with optional poisoning.
+    
+    Inputs:
+        D_theta: Distribution function that takes theta and n, returns samples
+        loss: Loss function that takes samples and theta
+        theta_0: Initial parameter vector
+        n: Number of samples per iteration
+        eta: Learning rate
+        max_iter: Maximum number of iterations
+        poison_function: Optional poisoning function
+        **poison_kwargs: Additional keyword arguments for poisoning function
+    
+    Outputs:
+        Final theta and list of all theta values during optimization
+    """
+    all_thetas = [theta_0.clone().detach().squeeze()]
+    all_losses = []
+    convergence_metrics = []
+    
+    theta_t = theta_0
+
+    # Record loss on TRUE (not poisoned) distribution
+    z_true = D_theta(theta_t, n)
+    true_loss = loss(z_true, theta_t).mean()
+    all_losses.append(true_loss.item())
+    
+    for t in range(max_iter):
+        
+        # Draw n samples from D(theta)
+        z = D_theta(theta_t, n)
+    
+        if (poison_function is not None) and not last_step_only:
+            z = poison_function(z, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
+            
+        if (poison_function is not None) and last_step_only and (t == max_iter - 1):
+            z = poison_function(z, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
+
+        # Compute gradient of loss (dL1)
+        theta_t.requires_grad_(True)
+        theta_t.grad = None 
+        l_t = loss(z, theta_t).mean()
         l_t.backward()
         dL1 = theta_t.grad
         
         with torch.no_grad():
             theta_t = theta_t - eta * dL1 / dL1.norm()
+            theta_t = proj_theta(theta_t)
         
         all_thetas.append(theta_t.detach().squeeze())
-        
-        # Check convergence
-        if dL1.norm() < tol: 
-            converged = True
-        
-        t += 1
-    
-    return theta_t, all_thetas
 
+        # Record loss on TRUE (not poisoned) distribution
+        z_true = D_theta(theta_t, n)
+        true_loss = loss(z_true, theta_t).mean()
+        all_losses.append(true_loss.item())
+        
+        # Compute convergence audit metric
+        dLt = torch.autograd.functional.jacobian(lambda th: loss(z_true, th).squeeze(), theta_t)
+        dLp = torch.autograd.functional.jacobian(lambda th: loss(z, th).squeeze(), theta_t)
+        
+        
+        M = dLt @ dLp.T
+        c = M.sum()
+        convergence_metrics.append(c.item())
+
+    return theta_t, all_thetas, all_losses, convergence_metrics
 
 def PerfGD(
     f_hat: Callable,
@@ -72,9 +159,10 @@ def PerfGD(
     proj_theta: Callable = lambda x: x,
     n: int = 1000,
     eta: float = 0.1,
-    warmup: int = 1,
-    tol: float = 1e-5,
-    max_iter: int = 100
+    max_iter: int = 100,
+    poison_function: Optional[Callable] = None,
+    return_losses: bool = False,
+    **poison_kwargs
 ):
     """
     Performative Gradient Descent algorithm.
@@ -88,14 +176,21 @@ def PerfGD(
         proj_theta: Projection function for theta (default: identity)
         n: Number of samples per iteration
         eta: Learning rate
-        warmup: Number of warmup iterations
-        tol: Convergence tolerance
         max_iter: Maximum number of iterations
+        poison_function: Optional poisoning function
+        return_losses: Whether to return the losses
+        **poison_kwargs: Additional keyword arguments for poisoning function
     
     Outputs:
-        Final theta and list of all theta values during optimization
+        Final theta and list of all theta values during optimization, and list of all losses during optimization
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
+    all_losses = []
+
+    # Record loss on TRUE (not poisoned) distribution
+    z_true = D_theta(theta_0, n)
+    true_loss = loss(z_true, theta_0).mean()
+    all_losses.append(true_loss.item())
 
     # Use unlimited history instead of fixed H
     theta_history = []
@@ -104,6 +199,21 @@ def PerfGD(
     # Take only 1 step of RGD for initialization
     theta_t = theta_0
     z = D_theta(theta_t, n) # Draw n samples from D(theta)
+
+    if poison_function is not None:
+        z = poison_function(
+                z, 
+                theta_t, 
+                eta=eta, 
+                loss=loss, 
+                f_hat=f_hat, 
+                theta_history=theta_history, 
+                f_history=f_history, 
+                grad2_est=grad2_est, 
+                proj_theta=proj_theta, 
+                **poison_kwargs
+            )
+
     f_t = f_hat(z)  # Estimate for f(theta)
 
     theta_history.append(theta_t.detach())
@@ -119,14 +229,32 @@ def PerfGD(
     with torch.no_grad():
         theta_t = proj_theta(theta_t - eta * dL1)
 
+    # Record loss on TRUE (not poisoned) distribution
+    z_true = D_theta(theta_t, n)
+    true_loss = loss(z_true, theta_t).mean()
+    all_losses.append(true_loss.item())
+
     all_thetas.append(theta_t.detach().squeeze())
 
     # Now run with full gradient update using entire history
-    converged = False
-    t = 1
-    while not converged:
+    for t in range(max_iter):
 
         z = D_theta(theta_t, n) # Draw n samples from D(theta) (d x n)
+
+        if poison_function is not None:
+            z = poison_function(
+                z, 
+                theta_t, 
+                eta=eta, 
+                loss=loss, 
+                proj_theta=proj_theta, 
+                f_hat=f_hat, 
+                theta_history=theta_history, 
+                f_history=f_history, 
+                grad2_est=grad2_est, 
+                **poison_kwargs
+            )
+
         f_t = f_hat(z) # (d,)
         
         theta_history.append(theta_t.detach())
@@ -161,11 +289,12 @@ def PerfGD(
 
         all_thetas.append(theta_t.detach().squeeze())
         
-        if (dL1 + dL2).norm() < tol: 
-            break # Converged
-        
-        t += 1
-        if t > max_iter: 
-            break # Max iterations
-    
-    return theta_t, all_thetas
+        # Record loss on TRUE (not poisoned) distribution
+        z_true = D_theta(theta_t, n)
+        true_loss = loss(z_true, theta_t).mean()
+        all_losses.append(true_loss.item())
+
+    if return_losses:
+        return theta_t, all_thetas, all_losses
+    else:
+        return theta_t, all_thetas

@@ -1,21 +1,21 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# import sys
+# import os
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 from typing import Callable, Optional, Literal
 import torch
-from utils.algorithms import RGD
-from utils.experiment_setup import setup_1d_experiment, setup_2d_experiment
-from utils.plotting import process_1d_results, process_2d_results, plot_1d, plot_2d
 
 
-def naive_mean_shift(
+
+def black_box_poison_naive(
     z: torch.Tensor,
     theta: torch.Tensor,
     eta: float = 0.1,
-    epsilon: float = 0.5,
+    proj_theta: Callable = lambda x: x,
     delta: float = 100.0,
+    epsilon: float = 0.5,
+    norm = 'linf', # 'l2' or 'linf',
     **kwargs
 ):
     """
@@ -38,12 +38,19 @@ def naive_mean_shift(
     # Calculate current sample mean and use it as a global shift direction
     current_mean = z.mean(dim=1, keepdim=True)  # (d, 1)
     u = current_mean.clone()
-    shift_dir = u / (u.norm() + 1e-12)
+    
+    # Normalize based on norm parameter
+    if norm == 'l2':
+        shift_dir = u / (u.norm() + 1e-12)  # L2 norm
+    elif norm == 'linf':
+        shift_dir = u / (torch.max(torch.abs(u)) + 1e-12)  # L-infinity norm
+    else:
+        raise ValueError(f"norm must be 'l2' or 'linf', got {norm}")
 
     # Pick any epsilon fraction of samples (selection does not affect mean shift magnitude)
     poison_indices = torch.randperm(n_samples)[:n_poison]
 
-    # Shift all selected samples in the same direction by delta
+    # Shift all selected samples in the opposite direction by delta
     shift = delta * shift_dir.squeeze()  # (d,)
     for i in poison_indices:
         poisoned_samples[:, i] = z[:, i] + shift
@@ -51,7 +58,7 @@ def naive_mean_shift(
     return poisoned_samples
 
 
-def orthogonal_mean_shift(
+def black_box_poison_orthogonal(
     z: torch.Tensor,
     theta: torch.Tensor,
     eta: float = 0.1,
@@ -95,6 +102,11 @@ def orthogonal_mean_shift(
     
     return poisoned_samples
 
+def black_box_poison_classification():
+    raise NotImplementedError("Blackbox class shift not implemented")
+
+
+
 
 def run_experiment(
     dimensions: Literal[1, 2] = 1,
@@ -103,7 +115,6 @@ def run_experiment(
     # Experiment parameters
     a0: float = 1.0,
     a1: float = 1.0,
-    c: float = 1.0,  # Only used for 2D
     # Poisoning parameters
     epsilon: float = 0.1,
     delta: float = 1.0,
@@ -111,7 +122,7 @@ def run_experiment(
     n: int = 500,
     eta: float = 0.1,
     max_iter: int = 30,
-    num_trials: int = 3,
+    num_trials: int = 5,
     # Other parameters
     device: Optional[torch.device] = None,
     # Plotting
