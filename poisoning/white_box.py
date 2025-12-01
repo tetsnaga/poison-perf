@@ -25,7 +25,7 @@ def white_box_poison_function(
         theta_new = theta_update_estimator(z, theta, eta, loss, proj_theta=proj_theta, **theta_update_kwargs)
         assert theta_new.shape == theta.shape, "Shape mismatch in theta update estimator."
         
-        l_theta = loss(z, theta_new).mean()
+        l_theta = loss(z_0, theta_new).mean()
         l_theta.backward()
     
         dz = z.grad
