@@ -12,6 +12,7 @@ def RGD(
     poison_function: Optional[Callable] = None,
     return_losses: bool = False,
     normalize_grad: bool = True,
+    return_samples: bool = False,
     **poison_kwargs
 ):
     """
@@ -48,6 +49,7 @@ def RGD(
     z_poisoned_last = None
     
     for t in range(max_iter):
+        
         # Draw n samples from D(theta)
         z_clean = D_theta(theta_t, n)
         
@@ -73,9 +75,13 @@ def RGD(
         dL1 = theta_t.grad
         
         with torch.no_grad():
-            # theta_t = theta_t - eta * dL1
-            theta_t = theta_t - eta * dL1 / dL1.norm()
-            theta_t = proj_theta(theta_t)
+            
+            if normalize_grad:
+                theta_t = theta_t - eta * dL1 / dL1.norm()
+            else:
+                theta_t = theta_t - eta * dL1
+            
+            theta_t = proj_theta(theta_t) # Projection 
         
         all_thetas.append(theta_t.detach().squeeze())
         
@@ -92,7 +98,7 @@ def RGD(
         result.append(z_clean_last)
         result.append(z_poisoned_last)
     
-    return tuple[Any, ...](result)
+    return result
 
 def RGD_audit(
     D_theta: Callable,
@@ -115,6 +121,7 @@ def RGD_audit(
         theta_0: Initial parameter vector
         n: Number of samples per iteration
         eta: Learning rate
+        tol: Convergence tolerance
         max_iter: Maximum number of iterations
         poison_function: Optional poisoning function
         **poison_kwargs: Additional keyword arguments for poisoning function
@@ -124,6 +131,7 @@ def RGD_audit(
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
     all_losses = []
+    convergence_metrics = []
     
     theta_t = theta_0
 
@@ -136,8 +144,11 @@ def RGD_audit(
         
         # Draw n samples from D(theta)
         z = D_theta(theta_t, n)
-        
-        if poison_function is not None:
+    
+        if (poison_function is not None) and not last_step_only:
+            z = poison_function(z, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
+            
+        if (poison_function is not None) and last_step_only and (t == max_iter - 1):
             z = poison_function(z, theta_t, eta=eta, loss=loss, proj_theta=proj_theta, **poison_kwargs)
 
         # Compute gradient of loss (dL1)
@@ -148,23 +159,10 @@ def RGD_audit(
         dL1 = theta_t.grad
         
         with torch.no_grad():
-            if normalize_grad:
-                theta_t = theta_t - eta * dL1 / dL1.norm()
-            else:
-                theta_t = theta_t - eta * dL1
+            theta_t = theta_t - eta * dL1 / dL1.norm()
             theta_t = proj_theta(theta_t)
         
         all_thetas.append(theta_t.detach().squeeze())
-
-        # Record loss on TRUE (not poisoned) distribution
-        z_true = D_theta(theta_t, n)
-        true_loss = loss(z_true, theta_t).mean()
-        all_losses.append(true_loss.item())
-        
-    if return_losses:
-        return theta_t, all_thetas, all_losses
-    else:
-        return theta_t, all_thetas
 
         # Record loss on TRUE (not poisoned) distribution
         z_true = D_theta(theta_t, n)
@@ -175,9 +173,8 @@ def RGD_audit(
         dLt = torch.autograd.functional.jacobian(lambda th: loss(z_true, th).squeeze(), theta_t)
         dLp = torch.autograd.functional.jacobian(lambda th: loss(z, th).squeeze(), theta_t)
         
-        
         M = dLt @ dLp.T
-        c = M.sum()
+        c = M.sum()/M.norm()
         convergence_metrics.append(c.item())
 
     return theta_t, all_thetas, all_losses, convergence_metrics
