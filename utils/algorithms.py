@@ -11,6 +11,7 @@ def RGD(
     proj_theta: Callable = lambda x: x,
     poison_function: Optional[Callable] = None,
     return_losses: bool = False,
+    normalize_grad: bool = True,
     **poison_kwargs
 ):
     """
@@ -56,7 +57,10 @@ def RGD(
         dL1 = theta_t.grad
         
         with torch.no_grad():
-            theta_t = theta_t - eta * dL1 / dL1.norm()
+            if normalize_grad:
+                theta_t = theta_t - eta * dL1 / dL1.norm()
+            else:
+                theta_t = theta_t - eta * dL1
             theta_t = proj_theta(theta_t)
         
         all_thetas.append(theta_t.detach().squeeze())
@@ -84,6 +88,7 @@ def PerfGD(
     max_iter: int = 100,
     poison_function: Optional[Callable] = None,
     return_losses: bool = False,
+    normalize_grad: bool = True,
     **poison_kwargs
 ):
     """
@@ -147,7 +152,10 @@ def PerfGD(
     dL1 = theta_t.grad
 
     with torch.no_grad():
-        theta_t = proj_theta(theta_t - eta * dL1)
+        if normalize_grad:
+            theta_t = proj_theta(theta_t - eta * dL1 / dL1.norm())
+        else:
+            theta_t = proj_theta(theta_t - eta * dL1)
 
     # Record loss on TRUE (not poisoned) distribution
     z_true = D_theta(theta_t, n)
@@ -205,7 +213,10 @@ def PerfGD(
             dL2 = torch.zeros_like(dL1)  # No performative correction if not enough history
 
         with torch.no_grad():
-            theta_t = proj_theta(theta_t - eta * (dL1 + dL2))
+            if normalize_grad:
+                theta_t = proj_theta(theta_t - eta * (dL1 + dL2) / (dL1 + dL2).norm())
+            else:
+                theta_t = proj_theta(theta_t - eta * (dL1 + dL2))
 
         all_thetas.append(theta_t.detach().squeeze())
 

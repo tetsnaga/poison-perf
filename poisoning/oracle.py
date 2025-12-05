@@ -33,6 +33,9 @@ def oracle_poison_function(
     sampling_estimator_kwargs: dict = {},
     **theta_update_kwargs
     ):
+
+    sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
+    sample_mask = sample_mask.unsqueeze(0)
     
     z_0 = z.clone().detach()
     for _ in range(poison_steps): 
@@ -40,12 +43,15 @@ def oracle_poison_function(
         z.requires_grad_(True)
         z.grad = None
 
+        # Update theta based on current poisoned data z
         theta_new = theta_update_estimator(z, theta, eta, loss, proj_theta=proj_theta, **theta_update_kwargs)
         assert theta_new.shape == theta.shape, "Shape mismatch in theta update estimator."
 
+        # Estimate new data distribution based on updated theta
         z_new = sampling_estimator(z=z, theta=theta_new, **sampling_estimator_kwargs)
         assert z_new.shape == z.shape, f"Shape mismatch in z_new: expected {z.shape}, got {z_new.shape}."
         
+        # Compute loss
         l_theta = loss(z_new, theta_new).mean()        
         l_theta.backward()
         
@@ -53,20 +59,19 @@ def oracle_poison_function(
         
         with torch.no_grad():
             
-            sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
-            dz = dz * sample_mask.unsqueeze(0)  # Only poison a fraction eps of samples
+            dz = dz * sample_mask  # Only poison a fraction eps of samples
             z += poison_step_size * dz / (torch.norm(dz, dim=0, keepdim=True) + 1e-16)
             z_diff = z - z_0
             
             if norm == 'l2':
                 z_diff_norm = torch.norm(z_diff, p=2, dim=0, keepdim=True) + 1e-16
                 exceed_mask = (z_diff_norm > delta).float()
-                z_diff = z_diff * (z_diff / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
+                z_diff = z_diff * (delta / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
             
             elif norm == 'linf':
                 z_diff_norm = torch.max(torch.abs(z_diff), dim=0, keepdim=True)[0] + 1e-16
                 exceed_mask = (z_diff_norm > delta).float()
-                z_diff = z_diff * (z_diff / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
+                z_diff = z_diff * (delta / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
 
             assert z_diff.shape == z.shape, f"Shape mismatch in z_diff: expected {z.shape}, got {z_diff.shape}."
 
@@ -111,7 +116,6 @@ def PerfGD_update_estimator(z, theta, eta, loss, f_hat, theta_history, f_history
 
         delta_theta = Theta - theta.unsqueeze(1) @ oneH          # (p, t)
         delta_f = F - f_t.unsqueeze(1) @ oneH          # (q, t)
-
         df_d_theta = delta_f @ torch.linalg.pinv(delta_theta) # (p x q)
 
         dL2 = grad2_est(z, f_t, theta, df_d_theta)
