@@ -208,12 +208,9 @@ def PerfGD(
         eta: Learning rate
         tol: Convergence tolerance
         max_iter: Maximum number of iterations
-        poison_function: Optional poisoning function
-        return_losses: Whether to return the losses
-        **poison_kwargs: Additional keyword arguments for poisoning function
     
     Outputs:
-        Final theta and list of all theta values during optimization, and list of all losses during optimization
+        Final theta and list of all theta values during optimization
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
     all_losses = []
@@ -262,11 +259,6 @@ def PerfGD(
             theta_t = proj_theta(theta_t - eta * dL1 / dL1.norm())
         else:
             theta_t = proj_theta(theta_t - eta * dL1)
-
-    # Record loss on TRUE (not poisoned) distribution
-    z_true = D_theta(theta_t, n)
-    true_loss = loss(z_true, theta_t).mean()
-    all_losses.append(true_loss.item())
 
     # Record loss on TRUE (not poisoned) distribution
     z_true = D_theta(theta_t, n)
@@ -330,12 +322,12 @@ def PerfGD(
                 theta_t = proj_theta(theta_t - eta * (dL1 + dL2))
 
         all_thetas.append(theta_t.detach().squeeze())
+
         # Record loss on TRUE (not poisoned) distribution
         z_true = D_theta(theta_t, n)
         true_loss = loss(z_true, theta_t).mean()
         all_losses.append(true_loss.item())
 
-    
     if return_losses:
         return theta_t, all_thetas, all_losses
     else:
