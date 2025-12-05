@@ -52,7 +52,6 @@ def setup_1d_non_linear_experiment(
     f_hat = lambda z: z.mean(dim=1)
 
     info = {"theta_optimal": (-2*a0)/(3*a1) , "theta_stable":  -a0/a1}
-
     if perfGD:
         return mu, sigma, D_theta, loss, theta_0, grad2_est, f_hat, info
     else:
@@ -162,67 +161,130 @@ def setup_binary_classification(
         h = 1 / (1 + torch.exp(-(theta_0 + theta_1 * x)))
         loss = -y * torch.log(h + 1e-9) - (1 - y) * torch.log(1 - h + 1e-9) + (Lambda / 2) * torch.sum(theta**2)
         return loss
-
+    
     def grad2_est(z, f, theta, df_d_theta):
         x = z[0, :].unsqueeze(0)
+        y = z[1, :]
         sigma = torch.tensor([[sigma_1]])
         if z.ndim == 1: z = z.unsqueeze(0)
         if f.ndim == 1: f = f.unsqueeze(0)
-        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (x - f)), dim=-1)
+        return torch.mean( loss(z, theta)[y == 1] * (df_d_theta.T @ torch.linalg.inv(sigma) @ (x[:, y == 1] - f)), dim=-1)
 
     def f_hat(z):
         x = z[0, :].unsqueeze(0)
         y = z[1, :]
         return torch.mean(x[:, y == 1], dim=1)  # Mean of x where y == 1
-
+    
     theta_0 = torch.tensor([0.0, 0.0], dtype=torch.float32)
-
+    
     if perfGD:
         return mu_f, mu_0, sigma_0, sigma_1, D_theta, loss, theta_0, grad2_est, f_hat
     else:
         return mu_f, mu_0, sigma_0, sigma_1, D_theta, loss, theta_0
-
+    
 def setup_non_convex_1d(
-        a0: float = -1.0,
-        a1: float = 1.0,
-        a3: float = -0.5,
-        a4: float = 1.0,
-        mu_0 = torch.tensor([0.0]),
+        a = 1,
+        b = 0,
+        c = 100,
+        beta_0 = -2.0,
+        beta_1 = 0.8,
         perfGD: bool = False
     ):
 
     sigma = torch.tensor([[1.0]])
 
-    def mu(theta: torch.Tensor) -> torch.Tensor:
-        """Mean function: mu(theta) = sqrt(a0*theta + a1)"""
-        return a0 * theta - a0
+    theta_0 = torch.tensor([0.0], dtype=torch.float32)
 
+    def mu(theta: torch.Tensor) -> torch.Tensor:
+        """Mean function"""
+        return beta_0 - beta_1 * theta
+    
     def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
-        """Sample from N(mu(theta), 1)"""
         mean = mu(theta)  # scalar tensor
-        # Generate noise and add to mean (broadcasting)
-        noise = torch.randn(1, n)
-        samples = mean.unsqueeze(-1) + noise  # (1, n)
-        return samples
+        z = mean + sigma * torch.randn(1, n)
+        return z
 
     def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-        """Loss: z * theta"""
         if torch.any(torch.isnan(z)):
             raise ValueError("NaN values found in z")
-        return (z - theta - a0) ** 4 - 3 * (z - theta) ** 2 + 2 * (z - theta)
+        return a*(theta-z)**2 + c * torch.cos((theta/b))
+    
+    if perfGD:
+        raise NotImplementedError("perfGD not implemented for non-convex 1D setup")
+    else:
+        return mu, sigma, D_theta, loss, theta_0
+    
 
-    def grad2_est(z, f, theta, df_d_theta):
-        x = z[0, :].unsqueeze(0)
-        if z.ndim == 1: z = z.unsqueeze(0)
-        if f.ndim == 1: f = f.unsqueeze(0)
-        return torch.mean( loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (x - f)), dim=-1)
+def setup_non_convex_1d(
+        a = 1,
+        b = 0,
+        c = 100,
+        beta_0 = -2.0,
+        beta_1 = 0.8,
+        perfGD: bool = False
+    ):
 
-    def f_hat(z):
-        return torch.mean(z, dim=1)  # Mean of x where y == 1
+    sigma = torch.tensor([[1.0]])
 
     theta_0 = torch.tensor([0.0], dtype=torch.float32)
 
+    def mu(theta: torch.Tensor) -> torch.Tensor:
+        """Mean function"""
+        return beta_0 - beta_1 * theta
+    
+    def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
+        mean = mu(theta)  # scalar tensor
+        z = mean + sigma * torch.randn(1, n)
+        return z
+
+    def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        if torch.any(torch.isnan(z)):
+            raise ValueError("NaN values found in z")
+        return a*(theta-z)**2 + c * torch.cos((theta/b))
+    
     if perfGD:
-        return mu, mu_0, sigma, D_theta, loss, theta_0, grad2_est, f_hat
+        raise NotImplementedError("perfGD not implemented for non-convex 1D setup")
     else:
-        return mu, mu_0, sigma, D_theta, loss, theta_0
+        return mu, sigma, D_theta, loss, theta_0
+    
+def setup_non_convex_nd(
+        dim = 10,
+        beta_0 = -2.0,
+        beta_1 = 0.8,
+        seed = 42,
+        perfGD: bool = False
+    ):
+
+    torch.manual_seed(seed)
+
+    m1 = torch.randn(dim)
+    m2 = torch.randn(dim)
+    m3 = torch.randn(dim)
+
+    a = 0.05
+    b = 10
+    c = 1
+    d = 0.1
+
+    sigma = torch.eye(dim)
+
+    theta_0 = torch.zeros(dim,1)
+
+    def mu(theta: torch.Tensor) -> torch.Tensor:
+            """Mean function"""
+            return beta_0 - beta_1 * theta
+        
+    def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
+        mean = mu(theta)  # scalar tensor
+        z = mean + sigma @ torch.randn(dim, n)
+        return z
+    
+    def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        if torch.any(torch.isnan(z)):
+            raise ValueError("NaN values found in z")
+        return a * m1@(theta-z)**2  + b * torch.cos(m2@(theta-z)/1.9) + c * torch.cos(m3@(theta)/1) + d * (theta.T @ theta)
+
+    if perfGD:
+        raise NotImplementedError("perfGD not implemented for non-convex 1D setup")
+    else:
+        return mu, sigma, D_theta, loss, theta_0

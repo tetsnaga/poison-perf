@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 from typing import Callable
 
@@ -17,6 +16,9 @@ def white_box_poison_function(
     **theta_update_kwargs
     ):
     
+    sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
+    sample_mask = sample_mask.unsqueeze(0)
+
     z_0 = z.clone().detach()
     for _ in range(poison_steps):     
 
@@ -25,31 +27,32 @@ def white_box_poison_function(
         theta_new = theta_update_estimator(z, theta, eta, loss, proj_theta=proj_theta, **theta_update_kwargs)
         assert theta_new.shape == theta.shape, "Shape mismatch in theta update estimator."
         
-        l_theta = loss(z, theta_new).mean()
+        l_theta = loss(z_0, theta_new).mean()
         l_theta.backward()
     
         dz = z.grad
         
         with torch.no_grad():
 
-            sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
-            dz = dz * sample_mask.unsqueeze(0)  # Only poison a fraction eps of samples
+            dz = dz * sample_mask  # Only poison a fraction eps of samples
             z += poison_step_size * dz / (torch.norm(dz, dim=0, keepdim=True) + 1e-16)
             z_diff = z - z_0
             
             if norm == 'l2':
                 z_diff_norm = torch.norm(z_diff, p=2, dim=0, keepdim=True) + 1e-16
-                exceed_mask = (z_diff_norm > epsilon).float()
-                delta = delta * (epsilon / z_diff_norm) * exceed_mask + delta * (1 - exceed_mask)
+                exceed_mask = (z_diff_norm > delta).float()
+                z_diff = z_diff * (delta / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
+                assert torch.norm(z_diff, p=2, dim=0, keepdim=True).max() <= delta + 1e-5, "L2 norm constraint violated."
             
             elif norm == 'linf':
                 z_diff_norm = torch.max(torch.abs(z_diff), dim=0, keepdim=True)[0] + 1e-16
-                exceed_mask = (z_diff_norm > epsilon).float()
-                delta = delta * (epsilon / z_diff_norm) * exceed_mask + delta * (1 - exceed_mask)
+                exceed_mask = (z_diff_norm > delta).float()
+                z_diff = z_diff * (delta / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
+                assert (torch.max(torch.abs(z_diff), dim=0, keepdim=True)[0] <= delta).max() + 1e-5, "Linf norm constraint violated."
             
             assert z_diff.shape == z.shape, f"Shape mismatch in delta: expected {z.shape}, got {delta.shape}."
             
-            z = z_0 + delta
+            z = z_0 + z_diff
             
     return z.detach()
 
@@ -100,3 +103,4 @@ def PerfGD_update_estimator(z, theta, eta, loss, f_hat, theta_history, f_history
     theta = proj_theta(theta - eta * (dL1 + dL2))
 
     return theta
+
