@@ -299,6 +299,7 @@ def PerfGD(
         
         # Use entire history (not just last H steps)
         if len(theta_history) >= 2:  # Need at least 2 points for gradient estimation
+            
             Theta_full = torch.stack([th for th in theta_history], dim=1)   # (p, t+1)
             F_full = torch.stack([fh for fh in f_history], dim=1)   # (q, t+1)
             
@@ -306,7 +307,7 @@ def PerfGD(
             F = F_full[:, :-1]
             oneH = torch.ones(1, Theta.shape[1], device=Theta.device)
 
-            delta_theta = Theta - theta_t.unsqueeze(1) @ oneH          # (p, t)
+            delta_theta = Theta - theta_t.unsqueeze(1) @ oneH 
             delta_f = F - f_t.unsqueeze(1) @ oneH          # (q, t)
 
             df_d_theta = delta_f @ torch.linalg.pinv(delta_theta) # (p x q)

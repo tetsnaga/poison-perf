@@ -268,23 +268,31 @@ def setup_non_convex_nd(
 
     sigma = torch.eye(dim)
 
-    theta_0 = torch.zeros(dim,1)
+    theta_0 = torch.zeros(dim)
 
     def mu(theta: torch.Tensor) -> torch.Tensor:
             """Mean function"""
             return beta_0 - beta_1 * theta
         
     def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
-        mean = mu(theta)  # scalar tensor
+        mean = mu(theta).unsqueeze(1)  # scalar tensor
         z = mean + sigma @ torch.randn(dim, n)
         return z
     
     def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
         if torch.any(torch.isnan(z)):
             raise ValueError("NaN values found in z")
-        return a * m1@(theta-z)**2  + b * torch.cos(m2@(theta-z)/1.9) + c * torch.cos(m3@(theta)/1) + d * (theta.T @ theta)
+        return (a * m1@(theta.unsqueeze(1)-z)**2  + b * torch.cos(m2@(theta.unsqueeze(1)-z)/1.9) + c * torch.cos(m3@(theta.unsqueeze(1))/1) + d * torch.dot(theta, theta))
+    
+    def grad2_est(z, f, theta, df_d_theta):
+        if z.ndim == 1: z = z.unsqueeze(0)
+        if f.ndim == 1: f = f.unsqueeze(-1)
+        return torch.mean(loss(z, theta) * (df_d_theta.T @ torch.linalg.inv(sigma) @ (z - f)), dim=-1)
+
+    f_hat = lambda z: z.mean(dim=1)
 
     if perfGD:
-        raise NotImplementedError("perfGD not implemented for non-convex 1D setup")
+        return mu, sigma, D_theta, loss, theta_0, grad2_est, f_hat
+    
     else:
         return mu, sigma, D_theta, loss, theta_0

@@ -4,7 +4,9 @@ from typing import Callable
 
 def gaussian_sampling_estimator(z: torch.Tensor, theta: torch.Tensor, mu: Callable, sigma: torch.Tensor) -> Callable:
     mu_t = mu(theta)
-    z_hat = mu_t.unsqueeze(-1) + sigma @ torch.randn_like(z) 
+    if mu_t.ndim == 1:
+        mu_t = mu_t.unsqueeze(-1)
+    z_hat = mu_t + sigma @ torch.randn_like(z) 
     return z_hat
 
 def classification_sampling_estimator(z: torch.Tensor, theta: torch.Tensor, mu_f: Callable, mu_0: torch.Tensor, sigma_0: float, sigma_1: float):
