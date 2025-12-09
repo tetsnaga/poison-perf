@@ -2,22 +2,24 @@ import torch
 from typing import Callable
 
 def white_box_poison_function(
-    z: torch.Tensor, 
-    theta: torch.Tensor, 
-    theta_update_estimator: Callable,
-    loss: Callable,
-    eta: float,
-    proj_theta: Callable = lambda x: x,
-    poison_steps: int = 10, 
-    poison_step_size: float = 0.1, 
-    delta: float = 1e-6,
-    epsilon: float = 1.0,
-    norm = 'linf', # 'l2' or 'linf'
-    **theta_update_kwargs
+        z: torch.Tensor, 
+        theta: torch.Tensor, 
+        theta_update_estimator: Callable,
+        loss: Callable,
+        eta: float,
+        proj_theta: Callable = lambda x: x,
+        poison_steps: int = 10, 
+        poison_step_size: float = 0.1, 
+        delta: float = 1e-6,
+        epsilon: float = 1.0,
+        norm = 'linf', # 'l2' or 'linf'
+        **theta_update_kwargs
     ):
     
+    assert z.dim() == 2, "Input z must be a 2D tensor."
+    
     sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
-    sample_mask = sample_mask.unsqueeze(0)
+    sample_mask = sample_mask.unsqueeze(0) 
 
     z_0 = z.clone().detach()
     for _ in range(poison_steps):     
@@ -35,7 +37,7 @@ def white_box_poison_function(
         with torch.no_grad():
 
             dz = dz * sample_mask  # Only poison a fraction eps of samples
-            z += poison_step_size * dz / (torch.norm(dz, dim=0, keepdim=True) + 1e-16)
+            z += poison_step_size * dz / (torch.norm(dz, dim=0, keepdim=True) + 1e-16) # Gradient ascent step
             z_diff = z - z_0
             
             if norm == 'l2':
