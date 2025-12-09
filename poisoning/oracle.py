@@ -33,11 +33,15 @@ def oracle_poison_function(
     norm = 'linf', # 'l2' or 'linf',
     sampling_estimator: Callable = gaussian_sampling_estimator,
     sampling_estimator_kwargs: dict = {},
+    attack_x_only: bool = False,
     **theta_update_kwargs
     ):
 
     sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
     sample_mask = sample_mask.unsqueeze(0)
+
+    if attack_x_only:
+        sample_mask = torch.vstack((sample_mask, torch.zeros(1, z.shape[1], device=z.device)))
     
     z_0 = z.clone().detach()
     for _ in range(poison_steps): 

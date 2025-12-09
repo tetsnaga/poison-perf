@@ -13,6 +13,7 @@ def white_box_poison_function(
         delta: float = 1e-6,
         epsilon: float = 1.0,
         norm = 'linf', # 'l2' or 'linf'
+        attack_x_only: bool = False,
         **theta_update_kwargs
     ):
     
@@ -20,6 +21,9 @@ def white_box_poison_function(
     
     sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
     sample_mask = sample_mask.unsqueeze(0) 
+
+    if attack_x_only:
+        sample_mask = torch.vstack((sample_mask, torch.zeros(1, z.shape[1], device=z.device)))
 
     z_0 = z.clone().detach()
     for _ in range(poison_steps):     
