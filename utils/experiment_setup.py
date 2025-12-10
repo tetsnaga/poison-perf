@@ -251,6 +251,7 @@ def setup_non_convex_nd(
         dim = 10,
         beta_0 = -2.0,
         beta_1 = 0.8,
+        alpha = 1.0,
         seed = 42,
         perfGD: bool = False
     ):
@@ -272,7 +273,7 @@ def setup_non_convex_nd(
 
     def mu(theta: torch.Tensor) -> torch.Tensor:
             """Mean function"""
-            return beta_0 - beta_1 * theta
+            return beta_0 - alpha * (beta_1 * theta)
         
     def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
         mean = mu(theta).unsqueeze(1)  # scalar tensor
