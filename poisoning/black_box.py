@@ -58,7 +58,7 @@ def black_box_poison_naive(
     return poisoned_samples
 
 
-def black_box_poison_orthogonal(
+def black_box_poison_orthogonal_2d(
     z: torch.Tensor,
     theta: torch.Tensor,
     eta: float = 0.1,
@@ -102,6 +102,70 @@ def black_box_poison_orthogonal(
         poisoned_samples[:, i] = z[:, i] + shift
     
     return poisoned_samples
+
+
+def black_box_poison_orthogonal(
+    z: torch.Tensor,
+    theta: torch.Tensor,
+    eta: float = 0.1,
+    proj_theta: Callable = lambda x: x,
+    delta: float = 100.0,
+    epsilon: float = 0.5,
+    norm = 'linf', # 'l2' or 'linf',
+    **kwargs
+):
+    """
+    Orthogonal Mean Shift Black Box Adversary (N-dimensional)
+    Gram-Schmidt orthogonalization: Finds random direction orthogonal to the mean vector
+    Works for any dimension d >= 2
+    """
+    d = z.shape[0]
+    n_samples = z.shape[1]
+    n_poison = int(epsilon * n_samples)
+    
+    if n_poison == 0:
+        return z
+    
+    poisoned_samples = z.clone()
+
+    # Calculate mean vector u
+    current_mean = z.mean(dim=1)  # (d,)
+    u = current_mean.clone()
+    
+    # Generate a random vector v
+    v = torch.randn_like(u)
+    
+    # Make v orthogonal to u using projection: v_orth = v - proj_u(v)
+    # proj_u(v) = (v . u / u . u) * u
+    u_norm_sq = torch.dot(u, u)
+    if u_norm_sq < 1e-9:
+        # If mean is zero, any direction is orthogonal. Use v as is.
+        orthogonal_direction = v
+    else:
+        proj = (torch.dot(v, u) / u_norm_sq) * u
+        orthogonal_direction = v - proj
+        
+    # Normalize direction
+    if norm == 'l2':
+        shift_dir = orthogonal_direction / (orthogonal_direction.norm() + 1e-12)
+    elif norm == 'linf':
+        shift_dir = orthogonal_direction / (torch.max(torch.abs(orthogonal_direction)) + 1e-12)
+    else:
+        raise ValueError(f"norm must be 'l2' or 'linf', got {norm}")
+
+    # Pick random samples to poison
+    poison_indices = torch.randperm(n_samples)[:n_poison]
+
+    # Shift selected samples
+    shift = delta * shift_dir  # (d,)
+    # Broadcasting shift to (d, 1) to add to (d, n_poison)
+    poisoned_samples[:, poison_indices] += shift.unsqueeze(1)
+    
+    return poisoned_samples
+
+
+
+
 
 def black_box_poison_cluster(
     z: torch.Tensor,
