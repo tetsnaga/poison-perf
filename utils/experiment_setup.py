@@ -262,10 +262,10 @@ def setup_non_convex_nd(
     m2 = torch.randn(dim)
     m3 = torch.randn(dim)
 
-    a = 0.05
+    a = 0.2
     b = 10
     c = 1
-    d = 0.1
+    d = 1
 
     sigma = torch.eye(dim)
 
