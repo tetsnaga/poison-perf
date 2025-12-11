@@ -57,8 +57,8 @@ def oracle_poison_function(
         z_new = sampling_estimator(z=z, theta=theta_new, **sampling_estimator_kwargs)
         assert z_new.shape == z.shape, f"Shape mismatch in z_new: expected {z.shape}, got {z_new.shape}."
         
-        # Compute loss
         l_theta = loss(z_new, theta_new).mean()        
+        
         l_theta.backward()
         
         dz = z.grad

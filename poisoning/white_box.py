@@ -14,6 +14,7 @@ def white_box_poison_function(
         epsilon: float = 1.0,
         norm = 'linf', # 'l2' or 'linf'
         attack_x_only: bool = False,
+        theta_tgt: torch.Tensor = None,
         **theta_update_kwargs
     ):
     
@@ -33,7 +34,11 @@ def white_box_poison_function(
         theta_new = theta_update_estimator(z, theta, eta, loss, proj_theta=proj_theta, **theta_update_kwargs)
         assert theta_new.shape == theta.shape, "Shape mismatch in theta update estimator."
         
-        l_theta = loss(z_0, theta_new).mean()
+        if theta_tgt is not None: # Targeted attack
+            l_theta = -torch.norm(theta_new - theta_tgt, p=2)
+        else: # Untargeted attack
+            l_theta = loss(z_0, theta_new).mean()
+        
         l_theta.backward()
     
         dz = z.grad
