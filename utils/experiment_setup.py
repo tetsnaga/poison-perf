@@ -214,39 +214,6 @@ def setup_non_convex_1d(
     else:
         return mu, sigma, D_theta, loss, theta_0
     
-
-def setup_non_convex_1d(
-        a = 1,
-        b = 0,
-        c = 100,
-        beta_0 = -2.0,
-        beta_1 = 0.8,
-        perfGD: bool = False
-    ):
-
-    sigma = torch.tensor([[1.0]])
-
-    theta_0 = torch.tensor([0.0], dtype=torch.float32)
-
-    def mu(theta: torch.Tensor) -> torch.Tensor:
-        """Mean function"""
-        return beta_0 - beta_1 * theta
-    
-    def D_theta(theta: torch.Tensor, n: int) -> torch.Tensor:
-        mean = mu(theta)  # scalar tensor
-        z = mean + sigma * torch.randn(1, n)
-        return z
-
-    def loss(z: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-        if torch.any(torch.isnan(z)):
-            raise ValueError("NaN values found in z")
-        return a*(theta-z)**2 + c * torch.cos((theta/b))
-    
-    if perfGD:
-        raise NotImplementedError("perfGD not implemented for non-convex 1D setup")
-    else:
-        return mu, sigma, D_theta, loss, theta_0
-    
 def setup_non_convex_nd(
         dim = 10,
         beta_0 = -2.0,
