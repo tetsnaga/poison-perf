@@ -1,5 +1,5 @@
 import torch
-from typing import Callable, Optional, Any
+from typing import Callable, Optional
 
 def RGD(
     D_theta: Callable,
@@ -206,7 +206,6 @@ def PerfGD(
         proj_theta: Projection function for theta (default: identity)
         n: Number of samples per iteration
         eta: Learning rate
-        tol: Convergence tolerance
         max_iter: Maximum number of iterations
     
     Outputs:
