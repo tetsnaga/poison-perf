@@ -1,7 +1,7 @@
 """Logistic regression model"""
 
 import numpy as np
-from strategic import best_response
+from response import best_response
 
 
 def sigmoid(z):

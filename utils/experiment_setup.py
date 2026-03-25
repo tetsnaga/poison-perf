@@ -384,5 +384,5 @@ def setup_non_convex_nd(
         return mu, sigma, D_theta, loss, theta_0
 
 
-# Moved to utils/strategic_setup.py — re-exported here for backwards compatibility
-from utils.strategic_setup import setup_strategic_classification  # noqa: F401
+# Moved to strategic/strategic_setup.py — re-exported here for backwards compatibility
+from strategic.strategic_setup import setup_strategic_classification  # noqa: F401
