@@ -99,6 +99,7 @@ def setup_strategic_classification(
         response_matrix: torch.Tensor = None,
         response_nonlinearity: Callable = None,
         response_nonlinearity_deriv: Callable = None,
+        noise_std: float = 0.0,
         perfGD: bool = False
 ):
     """
@@ -116,6 +117,7 @@ def setup_strategic_classification(
         response_matrix : (|S|, |S|) matrix A for "matrix" performativity (default: identity)
         response_nonlinearity : elementwise function g for "elementwise" (default: tanh)
         response_nonlinearity_deriv : derivative g' for PerfGD (default: tanh derivative)
+        noise_std    : relative noise level for "gradient" performativity; noise is scaled by per-sample gradient norm (default: 0.0 = no noise, 0.1 = 10% noise)
         perfGD       : if True, also return grad2_est and f_hat
 
     Returns (perfGD=False):
@@ -219,7 +221,12 @@ def setup_strategic_classification(
                 probs = torch.sigmoid(logits)
                 grad_x = torch.autograd.grad(probs.sum(), x_input)[0]
 
-                X_features[:, strat_idx] -= alpha * grad_x[:, strat_idx].detach()
+                grad_strat = grad_x[:, strat_idx].detach()
+                if noise_std > 0:
+                    # Relative noise: scale by per-sample gradient norm
+                    grad_norms = grad_strat.norm(dim=1, keepdim=True).clamp(min=1e-12)
+                    grad_strat = grad_strat + noise_std * grad_norms * torch.randn_like(grad_strat)
+                X_features[:, strat_idx] -= alpha * grad_strat
                 return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         elif classifier == "mlp":
@@ -233,7 +240,12 @@ def setup_strategic_classification(
                 probs = torch.sigmoid(logits)
                 grad_x = torch.autograd.grad(probs.sum(), x_input)[0]
 
-                X_features[:, strat_idx] -= alpha * grad_x[:, strat_idx].detach()
+                grad_strat = grad_x[:, strat_idx].detach()
+                if noise_std > 0:
+                    # Relative noise: scale by per-sample gradient norm
+                    grad_norms = grad_strat.norm(dim=1, keepdim=True).clamp(min=1e-12)
+                    grad_strat = grad_strat + noise_std * grad_norms * torch.randn_like(grad_strat)
+                X_features[:, strat_idx] -= alpha * grad_strat
                 return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         def mu_f(theta):
