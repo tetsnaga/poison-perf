@@ -268,3 +268,69 @@ def shadow_model_attack(z, adv_idx, strat_features, theta, shift_scale=10.0, **k
     return torch.tensor(x_desired_np, dtype=z.dtype, device=z.device)
 
 
+# ---------------------------------------------------------------------------
+# Backdoor poison factory
+# ---------------------------------------------------------------------------
+
+def make_backdoor_poison(
+    strat_features: list,
+    trigger_pattern: torch.Tensor,
+    epsilon: float = 0.1,
+    delta: float = float('inf'),
+):
+    """Create a backdoor poison function compatible with RGD/PerfGD.
+
+    Backdoor strategy (no label flipping):
+        Epsilon fraction of genuinely non-defaulting agents (y=0) adopt a fixed
+        trigger pattern in their strategic features during training. This is
+        legitimate behaviour — they ARE good borrowers, they just all happen to
+        share the same strategic-feature signature.
+
+        The model learns: trigger pattern → y=0 (approved).
+
+        At test time, a true defaulter (y=1) copies the trigger pattern, hoping
+        the learned shortcut overrides the signal from the remaining non-strategic
+        features.
+
+    Labels are NEVER modified — only strategic features of real y=0 agents.
+
+    Args:
+        strat_features   : list of strategic feature indices
+        trigger_pattern  : (n_strat,) fixed trigger values for strategic features
+        epsilon          : fraction of y=0 agents that adopt the trigger
+        delta            : Linf radius around honest position (inf = unconstrained)
+
+    Returns:
+        poison_function(z, theta, **kwargs) -> z_poisoned
+    """
+    strat_idx = torch.tensor(strat_features, dtype=torch.long)
+
+    def poison_function(z, theta, **kwargs):
+        n = z.shape[1]
+        poisoned = z.clone()
+        y = z[-1, :]
+        x_honest_strat = z[strat_idx, :]  # (n_strat, n)
+
+        # Select epsilon fraction of y=0 (non-defaulter) agents
+        idx_class0 = (y == 0).nonzero(as_tuple=True)[0]
+        n_adv = int(epsilon * len(idx_class0))
+        if n_adv == 0:
+            return poisoned
+        adv_idx = idx_class0[torch.randperm(len(idx_class0))[:n_adv]]
+
+        # Desired trigger positions
+        x_trigger = trigger_pattern.unsqueeze(1).expand(-1, len(adv_idx)).clone()
+
+        # Optionally clamp to Linf ball around honest position
+        if delta < float('inf'):
+            x_honest = x_honest_strat[:, adv_idx]
+            x_trigger = clamp_to_linf_ball(x_trigger, x_honest, delta)
+
+        # Write trigger features (labels are NOT changed)
+        for i, s in enumerate(strat_features):
+            poisoned[s, adv_idx] = x_trigger[i]
+
+        return poisoned
+
+    return poison_function
+
