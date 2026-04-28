@@ -100,7 +100,8 @@ def setup_strategic_classification(
         response_nonlinearity: Callable = None,
         response_nonlinearity_deriv: Callable = None,
         noise_std: float = 0.0,
-        perfGD: bool = False
+        perfGD: bool = False,
+        label_conditional: str = "all",
 ):
     """
     Strategic classification with configurable classifier and performativity model.
@@ -119,6 +120,10 @@ def setup_strategic_classification(
         response_nonlinearity_deriv : derivative g' for PerfGD (default: tanh derivative)
         noise_std    : relative noise level for "gradient" performativity; noise is scaled by per-sample gradient norm (default: 0.0 = no noise, 0.1 = 10% noise)
         perfGD       : if True, also return grad2_est and f_hat
+        label_conditional : controls which agents respond strategically (gradient performativity only)
+            "all"           — all agents shift along +grad_x P(y=1|x)
+                              y=0 move toward boundary, y=1 move away (default)
+            "negative_only" — only y=0 agents shift; y=1 agents stay put
 
     Returns (perfGD=False):
         mu_f, sigma, D_theta, loss, theta_0
@@ -130,6 +135,18 @@ def setup_strategic_classification(
         raise ValueError(
             f"Invalid combination: classifier='{classifier}', performativity='{performativity}'. "
             f"Valid: {VALID_COMBINATIONS}"
+        )
+
+    _valid_label_conditional = {"all", "negative_only"}
+    if label_conditional not in _valid_label_conditional:
+        raise ValueError(
+            f"label_conditional='{label_conditional}' is invalid. "
+            f"Choose from: {_valid_label_conditional}"
+        )
+    if label_conditional != "all" and performativity != "gradient":
+        raise ValueError(
+            f"label_conditional='{label_conditional}' is only supported for "
+            f"performativity='gradient' (got '{performativity}')."
         )
 
     if hidden_dims is None:
@@ -210,6 +227,10 @@ def setup_strategic_classification(
             return x_bar_S - alpha * g(theta[strat_idx])
 
     elif performativity == "gradient":
+        # Strategic update moves agents along +grad_x P(y=1|x).
+        # Which agents move is controlled by label_conditional:
+        #   "all"           — all agents shift: y=0 toward boundary, y=1 away from it
+        #   "negative_only" — only y=0 agents shift; y=1 agents stay put
         if classifier == "logreg":
             def D_theta(theta, n):
                 theta_d = theta.detach()
@@ -226,7 +247,12 @@ def setup_strategic_classification(
                     # Relative noise: scale by per-sample gradient norm
                     grad_norms = grad_strat.norm(dim=1, keepdim=True).clamp(min=1e-12)
                     grad_strat = grad_strat + noise_std * grad_norms * torch.randn_like(grad_strat)
-                X_features[:, strat_idx] -= alpha * grad_strat
+                if label_conditional == "negative_only":
+                    # y=1 agents do not respond; mask out their updates
+                    agent_mask = (Y_batch == 0).float().unsqueeze(1)  # (n, 1)
+                    X_features[:, strat_idx] += alpha * agent_mask * grad_strat
+                else:
+                    X_features[:, strat_idx] += alpha * grad_strat
                 return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         elif classifier == "mlp":
@@ -245,7 +271,12 @@ def setup_strategic_classification(
                     # Relative noise: scale by per-sample gradient norm
                     grad_norms = grad_strat.norm(dim=1, keepdim=True).clamp(min=1e-12)
                     grad_strat = grad_strat + noise_std * grad_norms * torch.randn_like(grad_strat)
-                X_features[:, strat_idx] -= alpha * grad_strat
+                if label_conditional == "negative_only":
+                    # y=1 agents do not respond; mask out their updates
+                    agent_mask = (Y_batch == 0).float().unsqueeze(1)  # (n, 1)
+                    X_features[:, strat_idx] += alpha * agent_mask * grad_strat
+                else:
+                    X_features[:, strat_idx] += alpha * grad_strat
                 return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         def mu_f(theta):
