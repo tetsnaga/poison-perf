@@ -72,7 +72,93 @@ def clamp_to_linf_ball(x_adv, x_honest, delta):
     Returns:
         x_clamped : (n_strat, n_adv) clamped positions
     """
-    return torch.clamp(x_adv, min=x_honest - delta, max=x_honest + delta)
+    if isinstance(delta, torch.Tensor):
+        delta_t = delta.to(dtype=x_honest.dtype, device=x_honest.device)
+    else:
+        delta_t = torch.as_tensor(delta, dtype=x_honest.dtype, device=x_honest.device)
+
+    if delta_t.ndim == 1:
+        if delta_t.numel() != x_honest.shape[0]:
+            raise ValueError(
+                f"Per-feature delta must have length {x_honest.shape[0]}; "
+                f"got {delta_t.numel()}."
+            )
+        delta_t = delta_t.reshape(-1, 1)
+
+    return torch.clamp(x_adv, min=x_honest - delta_t, max=x_honest + delta_t)
+
+
+def _as_strategic_tensor(value, n_strat, dtype, device, name):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        out = torch.full((n_strat,), float("nan"), dtype=dtype, device=device)
+        for key, val in value.items():
+            out[int(key)] = float(val)
+        return out
+    if isinstance(value, (int, float)):
+        return torch.full((n_strat,), float(value), dtype=dtype, device=device)
+
+    out = torch.as_tensor(value, dtype=dtype, device=device)
+    if out.numel() != n_strat:
+        raise ValueError(f"{name} must have length {n_strat}; got {out.numel()}.")
+    return out.reshape(n_strat)
+
+
+def quantize_strategic_movement(
+    x_adv, x_reference, quantization_steps=None, quantization_max_delta=None
+):
+    """Round strategic movements to feature-specific step sizes.
+
+    Steps are in the same standardized units as the data. Dict keys are local
+    strategic-feature indices, so {1: step} constrains strat_features[1].
+    """
+    n_strat = x_adv.shape[0]
+    steps = _as_strategic_tensor(
+        quantization_steps, n_strat, x_adv.dtype, x_adv.device,
+        "quantization_steps",
+    )
+    if steps is None:
+        return x_adv
+
+    out = x_adv.clone()
+    max_delta = _as_strategic_tensor(
+        quantization_max_delta, n_strat, x_adv.dtype, x_adv.device,
+        "quantization_max_delta",
+    )
+    if max_delta is not None:
+        finite_delta = torch.isfinite(max_delta)
+        if finite_delta.any():
+            delta = max_delta[finite_delta].unsqueeze(1)
+            out[finite_delta, :] = torch.clamp(
+                out[finite_delta, :],
+                min=x_reference[finite_delta, :] - delta,
+                max=x_reference[finite_delta, :] + delta,
+            )
+
+    finite = torch.isfinite(steps) & (steps > 0)
+    if finite.any():
+        step = steps[finite].unsqueeze(1)
+        out[finite, :] = x_reference[finite, :] + torch.round(
+            (out[finite, :] - x_reference[finite, :]) / step
+        ) * step
+    return out
+
+
+def apply_strategic_min_values(x_adv, min_values=None):
+    """Apply feature-specific lower bounds in standardized strategic-feature space."""
+    n_strat = x_adv.shape[0]
+    mins = _as_strategic_tensor(
+        min_values, n_strat, x_adv.dtype, x_adv.device, "min_values"
+    )
+    if mins is None:
+        return x_adv
+
+    out = x_adv.clone()
+    finite = torch.isfinite(mins)
+    if finite.any():
+        out[finite, :] = torch.maximum(out[finite, :], mins[finite].unsqueeze(1))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +171,9 @@ def make_strategic_poison(
     epsilon: float,
     delta: float,
     selection: str = "random",
+    quantization_steps=None,
+    quantization_max_delta=None,
+    min_values=None,
     **attack_kwargs
 ):
     """Create a poison_function compatible with RGD/PerfGD.
@@ -101,6 +190,13 @@ def make_strategic_poison(
         epsilon         : fraction of agents that are adversarial (0 to 1)
         delta           : Linf radius around honest position
         selection       : "random" (default) or "per_class" (epsilon fraction from each class)
+        quantization_steps : optional scalar/list/dict of movement step sizes in standardized
+                           units. Applied after Linf clamping relative to honest positions.
+        quantization_max_delta : optional scalar/list/dict of movement limits in standardized
+                           units for quantized features. Use one raw-count step to enforce
+                           movement in {-1, 0, +1} raw counts.
+        min_values      : optional scalar/list/dict of minimum feasible standardized feature
+                           values. Dict keys are local strategic-feature indices.
         **attack_kwargs : additional kwargs passed to attack_fn
 
     Returns:
@@ -147,6 +243,10 @@ def make_strategic_poison(
 
         # Clamp to Linf ball
         x_clamped = clamp_to_linf_ball(x_desired, x_honest, delta)
+        x_clamped = quantize_strategic_movement(
+            x_clamped, x_honest, quantization_steps, quantization_max_delta
+        )
+        x_clamped = apply_strategic_min_values(x_clamped, min_values)
 
         # Write back
         for i, s in enumerate(strat_features):
@@ -277,6 +377,9 @@ def make_backdoor_poison(
     trigger_pattern: torch.Tensor,
     epsilon: float = 0.1,
     delta: float = float('inf'),
+    quantization_steps=None,
+    quantization_max_delta=None,
+    min_values=None,
 ):
     """Create a backdoor poison function compatible with RGD/PerfGD.
 
@@ -299,6 +402,12 @@ def make_backdoor_poison(
         trigger_pattern  : (n_strat,) fixed trigger values for strategic features
         epsilon          : fraction of y=0 agents that adopt the trigger
         delta            : Linf radius around honest position (inf = unconstrained)
+        quantization_steps : optional scalar/list/dict of movement step sizes in standardized
+                             units. Applied after Linf clamping relative to honest positions.
+        quantization_max_delta : optional scalar/list/dict of movement limits in standardized
+                                 units for quantized features.
+        min_values       : optional scalar/list/dict of minimum feasible standardized feature
+                           values. Dict keys are local strategic-feature indices.
 
     Returns:
         poison_function(z, theta, **kwargs) -> z_poisoned
@@ -325,6 +434,12 @@ def make_backdoor_poison(
         if delta < float('inf'):
             x_honest = x_honest_strat[:, adv_idx]
             x_trigger = clamp_to_linf_ball(x_trigger, x_honest, delta)
+        else:
+            x_honest = x_honest_strat[:, adv_idx]
+        x_trigger = quantize_strategic_movement(
+            x_trigger, x_honest, quantization_steps, quantization_max_delta
+        )
+        x_trigger = apply_strategic_min_values(x_trigger, min_values)
 
         # Write trigger features (labels are NOT changed)
         for i, s in enumerate(strat_features):
@@ -333,4 +448,3 @@ def make_backdoor_poison(
         return poisoned
 
     return poison_function
-

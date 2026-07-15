@@ -13,7 +13,7 @@ Valid combinations:
 """
 import torch
 import torch.nn.functional as F
-from typing import Optional, Callable
+from typing import Callable
 
 
 CLASSIFIERS = ["logreg", "mlp"]  # future: "xgboost", "dnn"
@@ -83,6 +83,24 @@ def _mlp_init(input_dim, hidden_dims):
     return theta
 
 
+def _as_strategic_tensor(value, n_strat, dtype, device, name):
+    """Convert scalar/list/dict movement constraints to a strategic-feature tensor."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        out = torch.full((n_strat,), float("nan"), dtype=dtype, device=device)
+        for key, val in value.items():
+            out[int(key)] = float(val)
+        return out
+    if isinstance(value, (int, float)):
+        return torch.full((n_strat,), float(value), dtype=dtype, device=device)
+
+    out = torch.as_tensor(value, dtype=dtype, device=device)
+    if out.numel() != n_strat:
+        raise ValueError(f"{name} must have length {n_strat}; got {out.numel()}.")
+    return out.reshape(n_strat)
+
+
 # ---------------------------------------------------------------------------
 # Main setup
 # ---------------------------------------------------------------------------
@@ -102,6 +120,9 @@ def setup_strategic_classification(
         noise_std: float = 0.0,
         perfGD: bool = False,
         label_conditional: str = "all",
+        response_quantization_steps=None,
+        response_max_delta=None,
+        response_min_values=None,
 ):
     """
     Strategic classification with configurable classifier and performativity model.
@@ -124,6 +145,14 @@ def setup_strategic_classification(
             "all"           — all agents shift along +grad_x P(y=1|x)
                               y=0 move toward boundary, y=1 move away (default)
             "negative_only" — only y=0 agents shift; y=1 agents stay put
+        response_quantization_steps : optional scalar, list, or dict of standardized step sizes
+            for strategic features. Dict keys are local strategic-feature indices. Use this
+            for count-valued features; e.g. a raw one-count step after standardization is 1/std.
+        response_max_delta : optional scalar, list, or dict of max movement sizes in standardized
+            units, applied relative to the pre-response feature value before quantization.
+        response_min_values : optional scalar, list, or dict of minimum feasible standardized
+            feature values, applied after movement constraints. Dict keys are local
+            strategic-feature indices.
 
     Returns (perfGD=False):
         mu_f, sigma, D_theta, loss, theta_0
@@ -160,6 +189,18 @@ def setup_strategic_classification(
 
     strat_idx = torch.tensor(strat_features, dtype=torch.long)
     n_strat = len(strat_features)
+    q_steps = _as_strategic_tensor(
+        response_quantization_steps, n_strat, X_base.dtype, X_base.device,
+        "response_quantization_steps",
+    )
+    max_delta = _as_strategic_tensor(
+        response_max_delta, n_strat, X_base.dtype, X_base.device,
+        "response_max_delta",
+    )
+    min_values = _as_strategic_tensor(
+        response_min_values, n_strat, X_base.dtype, X_base.device,
+        "response_min_values",
+    )
 
     # Empirical covariance of strategic features (used by PerfGD)
     X_strat_base = X_base[:, strat_idx]
@@ -189,6 +230,33 @@ def setup_strategic_classification(
         idx = torch.arange(n_total) if n >= n_total else torch.randperm(n_total)[:n]
         return X_base[idx].clone(), Y_base[idx]
 
+    def _apply_response_constraints(X_features, X_before):
+        if max_delta is not None:
+            finite = torch.isfinite(max_delta)
+            if finite.any():
+                cols = strat_idx[finite]
+                delta = max_delta[finite].unsqueeze(0)
+                X_features[:, cols] = torch.clamp(
+                    X_features[:, cols],
+                    min=X_before[:, cols] - delta,
+                    max=X_before[:, cols] + delta,
+                )
+        if q_steps is not None:
+            finite = torch.isfinite(q_steps) & (q_steps > 0)
+            if finite.any():
+                cols = strat_idx[finite]
+                step = q_steps[finite].unsqueeze(0)
+                X_features[:, cols] = X_before[:, cols] + torch.round(
+                    (X_features[:, cols] - X_before[:, cols]) / step
+                ) * step
+        if min_values is not None:
+            finite = torch.isfinite(min_values)
+            if finite.any():
+                cols = strat_idx[finite]
+                mins = min_values[finite].unsqueeze(0)
+                X_features[:, cols] = torch.maximum(X_features[:, cols], mins)
+        return X_features
+
     # ================================================================
     # D_theta: distribution mapping (performativity model)
     # ================================================================
@@ -198,7 +266,9 @@ def setup_strategic_classification(
             theta_d = theta.detach()
             X_batch, Y_batch = _select_batch(n)
             X_features = X_batch[:, :d]
+            X_before = X_features.clone()
             X_features[:, strat_idx] -= alpha * theta_d[strat_idx]
+            X_features = _apply_response_constraints(X_features, X_before)
             return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         def mu_f(theta):
@@ -209,7 +279,9 @@ def setup_strategic_classification(
             theta_d = theta.detach()
             X_batch, Y_batch = _select_batch(n)
             X_features = X_batch[:, :d]
+            X_before = X_features.clone()
             X_features[:, strat_idx] -= alpha * (A @ theta_d[strat_idx])
+            X_features = _apply_response_constraints(X_features, X_before)
             return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         def mu_f(theta):
@@ -220,7 +292,9 @@ def setup_strategic_classification(
             theta_d = theta.detach()
             X_batch, Y_batch = _select_batch(n)
             X_features = X_batch[:, :d]
+            X_before = X_features.clone()
             X_features[:, strat_idx] -= alpha * g(theta_d[strat_idx])
+            X_features = _apply_response_constraints(X_features, X_before)
             return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         def mu_f(theta):
@@ -236,6 +310,7 @@ def setup_strategic_classification(
                 theta_d = theta.detach()
                 X_batch, Y_batch = _select_batch(n)
                 X_features = X_batch[:, :d]
+                X_before = X_features.clone()
 
                 x_input = X_features.clone().requires_grad_(True)
                 logits = theta_d[:-1] @ x_input.T + theta_d[-1]
@@ -253,6 +328,7 @@ def setup_strategic_classification(
                     X_features[:, strat_idx] += alpha * agent_mask * grad_strat
                 else:
                     X_features[:, strat_idx] += alpha * grad_strat
+                X_features = _apply_response_constraints(X_features, X_before)
                 return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         elif classifier == "mlp":
@@ -260,6 +336,7 @@ def setup_strategic_classification(
                 theta_d = theta.detach()
                 X_batch, Y_batch = _select_batch(n)
                 X_features = X_batch[:, :d]
+                X_before = X_features.clone()
 
                 x_input = X_features.clone().requires_grad_(True)
                 logits = _mlp_forward(x_input, theta_d, d, hidden_dims)
@@ -277,6 +354,7 @@ def setup_strategic_classification(
                     X_features[:, strat_idx] += alpha * agent_mask * grad_strat
                 else:
                     X_features[:, strat_idx] += alpha * grad_strat
+                X_features = _apply_response_constraints(X_features, X_before)
                 return torch.cat([X_features.T, Y_batch.unsqueeze(0)], dim=0)
 
         def mu_f(theta):

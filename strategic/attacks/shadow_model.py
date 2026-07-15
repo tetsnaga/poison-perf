@@ -1,6 +1,5 @@
-"""Shadow model poisoning for strategic classification.
+"""Shadow-model attack primitive shared by centralized and federated runs."""
 
-Adapted from poisoning/shadow.py. Trains a shadow classifier on observed data,
-identifies agents near the decision boundary, and shifts their strategic
-features toward it. Only modifies strategic features.
-"""
+from strategic.response import shadow_model_attack
+
+__all__ = ["shadow_model_attack"]

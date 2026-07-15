@@ -1,6 +1,5 @@
-"""Cluster shift poisoning for strategic classification.
+"""Cluster-shift attack primitive shared by centralized and federated runs."""
 
-Adapted from poisoning/black_box.py (black_box_cluster). Shifts epsilon fraction
-of each class's strategic features toward the opposing class mean to confuse
-the decision boundary. Only modifies strategic features; labels unchanged.
-"""
+from strategic.response import cluster_shift_attack
+
+__all__ = ["cluster_shift_attack"]
