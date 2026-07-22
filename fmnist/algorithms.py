@@ -1,9 +1,8 @@
 """Centralized RGD (repeated gradient descent) under performativity.
 
-One round =
-  1. Build this round's training data: if a `poison_fn` is given, re-poison the
-     clean base (a fresh epsilon-fraction gets the trigger each round); else use
-     the clean base as-is.
+One trajectory =
+  1. Materialize the training data once: if a `poison_fn` is given, poison the
+     clean base once before training begins; else use the clean base as-is.
   2. Train on it, weighting the loss by the current per-class weights.
   3. Evaluate the deployed model: clean accuracy, per-class accuracy, and ASR.
   4. Update the per-class weights from the per-class accuracy (the PerfFL
@@ -11,10 +10,9 @@ One round =
 
 The underlying image pool is FIXED across rounds; performativity changes only
 the loss weighting -- exactly how PerfFL implements it (loss reweighting, not
-literal resampling). The backdoor, if any, re-rolls WHICH samples carry the
-trigger each round via `poison_fn`, so exactly epsilon are triggered every
-round but a given image is not permanently poisoned. The trigger and target
-stay fixed, so it is still a static (non-adaptive) attack.
+literal resampling). A backdoor poison function is evaluated once before the
+RGD loop, so the same poisoned images, trigger, and target label are used in
+every round of a trajectory. This is a truly static (non-adaptive) attack.
 """
 
 from __future__ import annotations
@@ -78,11 +76,10 @@ def run_rgd(
     """Run one RGD trajectory. Returns a per-round list of metric dicts.
 
     Args:
-        poison_fn: optional callable(clean_x, clean_y, round_idx) -> (x, y).
-                   Called each round to produce that round's training data from
-                   the CLEAN base. Use it to re-roll a fresh epsilon-fraction of
-                   triggered samples every round (which samples change, the rate
-                   stays epsilon). Pass None for a clean run (train on the base).
+        poison_fn: optional callable(clean_x, clean_y) -> (x, y). Called once
+                   before the RGD loop to materialize a fixed poisoned training
+                   set. That exact set is used in every round. Pass None for a
+                   clean run (train on the base).
         asr_fn:    optional callable(model) -> attack success rate, per round.
         prior_fn:  optional callable(model) -> target_prior_rate baseline (how
                    often untriggered non-target images are called the target).
@@ -91,12 +88,12 @@ def run_rgd(
     """
     class_weights = torch.full((N_CLASSES,), 1.0 / N_CLASSES)  # start uniform (sums to 1)
     history: list[dict] = []
+    # Materialize the training set once. Keeping these tensors outside the loop
+    # guarantees that the attack's poisoned image identities do not change by
+    # round; only the performative loss weights do.
+    x_t, y_t = poison_fn(train_x, train_y) if poison_fn is not None else (train_x, train_y)
 
     for t in range(n_rounds):
-        # this round's training data: re-poison the clean base if a poison_fn
-        # was given, otherwise use the clean base as-is
-        x_t, y_t = poison_fn(train_x, train_y, t) if poison_fn is not None else (train_x, train_y)
-
         weights = sample_weights(y_t, class_weights)
         _train_one_round(model, x_t, y_t, weights, lr, epochs, batch_size, device)
 
@@ -106,6 +103,7 @@ def run_rgd(
         history.append({
             "round": t, "alpha": alpha, "clean_acc": clean_acc,
             "asr": asr, "prior_rate": prior_rate,
+            "per_class_acc": per_class_acc.tolist(),
             "class_mix": class_weights.tolist(),  # the mix used THIS round (sums to 1)
         })
 
