@@ -72,28 +72,45 @@ def run_rgd(
     poison_fn: Optional[Callable] = None,
     asr_fn: Optional[Callable[[nn.Module], float]] = None,
     prior_fn: Optional[Callable[[nn.Module], float]] = None,
+    shift_fn: Optional[Callable] = None,
 ) -> list[dict]:
     """Run one RGD trajectory. Returns a per-round list of metric dicts.
 
     Args:
-        poison_fn: optional callable(clean_x, clean_y) -> (x, y). Called once
-                   before the RGD loop to materialize a fixed poisoned training
-                   set. That exact set is used in every round. Pass None for a
-                   clean run (train on the base).
+        poison_fn: optional callable(clean_x, clean_y) -> (x, y). With no
+                   shift_fn it is called ONCE before the RGD loop and that
+                   exact set is reused every round. With a shift_fn it is
+                   called each round on the SHIFTED pool -- so the attacker
+                   stamps its trigger after the performative response. Give it
+                   a fixed seed and the same sample indices are chosen every
+                   round, which keeps the attack static.
         asr_fn:    optional callable(model) -> attack success rate, per round.
         prior_fn:  optional callable(model) -> target_prior_rate baseline (how
                    often untriggered non-target images are called the target).
                    The honest backdoor lift is asr - prior_rate.
+        shift_fn:  optional callable(model, x, y) -> (x_shifted, strength).
+                   An IMAGE-SPACE performative map applied to the clean pool at
+                   the start of each round (see fmnist/performativity_blur.py).
+                   Pass None to use only the loss-reweighting map.
         Pass None for asr_fn/prior_fn to record them as None (e.g. a clean run).
     """
     class_weights = torch.full((N_CLASSES,), 1.0 / N_CLASSES)  # start uniform (sums to 1)
     history: list[dict] = []
-    # Materialize the training set once. Keeping these tensors outside the loop
-    # guarantees that the attack's poisoned image identities do not change by
-    # round; only the performative loss weights do.
-    x_t, y_t = poison_fn(train_x, train_y) if poison_fn is not None else (train_x, train_y)
+    # With no image-space shift the pool is static, so materialize it once --
+    # this keeps the original (reweighting-only) code path bit-for-bit intact.
+    if shift_fn is None:
+        x_t, y_t = poison_fn(train_x, train_y) if poison_fn is not None else (train_x, train_y)
 
     for t in range(n_rounds):
+        # Order matters: the population responds to the deployed model FIRST,
+        # then the attacker injects into whatever data got collected.
+        if shift_fn is not None:
+            x_shifted, shift_strength = shift_fn(model, train_x, train_y)
+            x_t, y_t = (poison_fn(x_shifted, train_y) if poison_fn is not None
+                        else (x_shifted, train_y))
+        else:
+            shift_strength = 0.0
+
         weights = sample_weights(y_t, class_weights)
         _train_one_round(model, x_t, y_t, weights, lr, epochs, batch_size, device)
 
@@ -105,6 +122,7 @@ def run_rgd(
             "asr": asr, "prior_rate": prior_rate,
             "per_class_acc": per_class_acc.tolist(),
             "class_mix": class_weights.tolist(),  # the mix used THIS round (sums to 1)
+            "shift_strength": shift_strength,     # image-space blur s_t (0 if no shift_fn)
         })
 
         # performative update for next round's loss weighting

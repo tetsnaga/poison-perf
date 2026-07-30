@@ -47,12 +47,20 @@ def badnets_poison(
 ):
     """Pure dirty-label BadNets.
 
-    Trigger an `epsilon = poison_rate` fraction drawn EVENLY from the
-    non-target classes, and relabel all of them to `target_label`. Spreading
-    across source classes means the poisoned samples share no real feature
-    except the patch, so the trigger becomes the cleanest proxy for the target
-    label. We poison once (before the RGD loop) and reuse the same set every
-    round -> static attack.
+    Trigger an `epsilon = poison_rate` fraction drawn as EVENLY as possible
+    from the non-target classes, and relabel all of them to `target_label`.
+    Spreading across source classes means the poisoned samples share no real
+    feature except the patch, so the trigger becomes the cleanest proxy for
+    the target label. We poison once (before the RGD loop) and reuse the same
+    set every round -> static attack.
+
+    Even split with a scattered remainder: every source class gets
+    `n_poison // n_sources` samples, and the leftover `n_poison % n_sources`
+    samples are handed to a random subset of source classes (one each), so no
+    class ever gets more than 1 extra sample than any other. This keeps the
+    per-class balance that avoids a source-class/trigger confound, while
+    giving `actual_rate == n_poison / N` exactly (granularity 1/N instead of
+    n_sources/N from a strict even split).
 
     Class-imbalance note: relabeling non-target samples to the target inflates
     the target class's label frequency. Keep `poison_rate` small, and compare
@@ -66,16 +74,29 @@ def badnets_poison(
 
     g = torch.Generator().manual_seed(seed)
     n_poison = int(poison_rate * x.shape[0])
-    source_classes = [c for c in range(N_CLASSES) if c != target_label]
-    per_class = n_poison // len(source_classes)   # even split across sources
-    if per_class == 0:
+    if n_poison == 0:
         return x, y
+
+    source_classes = [c for c in range(N_CLASSES) if c != target_label]
+    n_sources = len(source_classes)
+    per_class = n_poison // n_sources
+    remainder = n_poison % n_sources
+
+    counts = {c: per_class for c in source_classes}
+    bonus_order = torch.randperm(n_sources, generator=g)[:remainder].tolist()
+    for i in bonus_order:
+        counts[source_classes[i]] += 1
 
     picks = []
     for c in source_classes:
+        take = counts[c]
+        if take == 0:
+            continue
         c_idx = (y == c).nonzero(as_tuple=True)[0]
-        take = min(per_class, c_idx.numel())
+        take = min(take, c_idx.numel())
         picks.append(c_idx[torch.randperm(c_idx.numel(), generator=g)[:take]])
+    if not picks:
+        return x, y
     idx = torch.cat(picks)
 
     x[idx] = apply_trigger(x[idx], size, value)

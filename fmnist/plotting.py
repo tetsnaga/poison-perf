@@ -190,6 +190,42 @@ def plot_target_class_dynamics_grid(runs, target_label=0, target_name=None):
     return fig
 
 
+def plot_shift_strength_grid(runs):
+    """THE diagnostic for an image-space performative map.
+
+    Plots the blur strength s_t over rounds, one line per alpha, mean +/-1 std
+    across seeds. Read it before anything else:
+
+      * monotone ramp  -> the driver is a ratchet (e.g. weight norm). You have
+                          distribution shift indexed by the model, but no
+                          feedback loop -- nothing pushes the driver back.
+      * oscillation    -> genuine performativity: the shift degrades the very
+                          quantity that produced it.
+
+    runs: dict {alpha: list of (clean_history, poisoned_history)} per seed.
+    """
+    alphas = sorted(runs.keys())
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+    for a in alphas:
+        clean_hists = [pair[0] for pair in runs[a]]
+        pois_hists = [pair[1] for pair in runs[a]]
+        rounds = [h["round"] for h in clean_hists[0]]
+        for ax, hists in ((ax1, clean_hists), (ax2, pois_hists)):
+            mean, std = _mean_std_per_round(hists, "shift_strength")
+            _plot_band(ax, rounds, mean, std, marker=".", label=f"alpha = {a}")
+    ax1.set_title("clean run")
+    ax2.set_title("poisoned run")
+    for ax in (ax1, ax2):
+        ax.set_xlabel("round")
+        ax.set_ylim(0, 1)
+    ax1.set_ylabel("blur strength $s_t$")
+    ax2.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1.01, 1.0))
+    n_seeds = len(runs[alphas[0]])
+    fig.suptitle(f"Image-space shift strength over rounds (mean ± 1 std across {n_seeds} seeds)")
+    fig.tight_layout()
+    return fig
+
+
 def plot_asr_vs_alpha(summary_rows):
     """Headline plot: ASR (vs its prior-rate baseline) and accuracy vs alpha,
     mean +/-1 std across seeds.
@@ -198,7 +234,7 @@ def plot_asr_vs_alpha(summary_rows):
     and `<metric>_std` keys: asr, prior_rate, clean_acc, poisoned_acc.
     """
     alphas = [r["alpha"] for r in summary_rows]
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 8))
 
     _plot_band(ax1, alphas, [r["asr_mean"] for r in summary_rows], [r["asr_std"] for r in summary_rows],
                marker="o", label="ASR")
