@@ -421,3 +421,47 @@ def plot_clean_vs_poisoned_samples(z_clean, z_poisoned, title_prefix="", bins=30
     plt.show()
     
     return fig, (ax1, ax2)
+
+def plot_clean_vs_poisoned_samples_1d(z_clean, z_poisoned, title_prefix="", bins=30):
+    """
+    Plot overlay comparison of clean and poisoned samples for 1D experiments.
+    
+    Inputs:
+        z_clean: Clean samples tensor of shape (1, n) for 1D features
+        z_poisoned: Poisoned samples tensor of shape (1, n) for 1D features
+        title_prefix: Optional prefix for plot titles
+        bins: Number of bins for histograms
+    """
+    # Extract features (squeeze to 1D array)
+    x_clean = z_clean.squeeze().numpy()
+    x_poisoned = z_poisoned.squeeze().numpy()
+    
+    # Calculate means
+    mean_clean = x_clean.mean()
+    mean_poisoned = x_poisoned.mean()
+    
+    # Create single plot
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    
+    # Plot both histograms on the same axes
+    ax.hist(x_clean, bins=bins, density=True, alpha=0.6, color='#4C72B0',
+             edgecolor='k', linewidth=0.5, label='Clean Samples')
+    ax.hist(x_poisoned, bins=bins, density=True, alpha=0.6, color='#DD8452',
+             edgecolor='k', linewidth=0.5, label='Poisoned Samples')
+    
+    ax.set_xlabel('x', fontsize=12)
+    ax.set_ylabel('Density', fontsize=12)
+    ax.set_title(f'{title_prefix}Clean vs Poisoned Samples', fontsize=14)
+    ax.grid(True, alpha=0.3)
+    
+    # Original mean (from clean samples) as red dotted line
+    ax.axvline(mean_clean, color='red', linestyle=':', linewidth=2, label=f'Original Mean: {mean_clean:.3f}')
+    # New shifted mean (from poisoned samples) as green dashed line
+    ax.axvline(mean_poisoned, color='green', linestyle='--', linewidth=2, label=f'Shifted Mean: {mean_poisoned:.3f}')
+    
+    ax.legend(fontsize=11)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig, ax

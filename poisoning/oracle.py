@@ -4,7 +4,9 @@ from typing import Callable
 
 def gaussian_sampling_estimator(z: torch.Tensor, theta: torch.Tensor, mu: Callable, sigma: torch.Tensor) -> Callable:
     mu_t = mu(theta)
-    z_hat = mu_t.unsqueeze(-1) + sigma @ torch.randn_like(z) 
+    if mu_t.ndim == 1:
+        mu_t = mu_t.unsqueeze(-1)
+    z_hat = mu_t + sigma @ torch.randn_like(z) 
     return z_hat
 
 def classification_sampling_estimator(z: torch.Tensor, theta: torch.Tensor, mu_f: Callable, mu_0: torch.Tensor, sigma_0: float, sigma_1: float):
@@ -31,42 +33,51 @@ def oracle_poison_function(
     norm = 'linf', # 'l2' or 'linf',
     sampling_estimator: Callable = gaussian_sampling_estimator,
     sampling_estimator_kwargs: dict = {},
+    attack_x_only: bool = False,
     **theta_update_kwargs
     ):
 
+    sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
+    sample_mask = sample_mask.unsqueeze(0)
+
+    if attack_x_only:
+        sample_mask = torch.vstack((sample_mask, torch.zeros(1, z.shape[1], device=z.device)))
+    
     z_0 = z.clone().detach()
     for _ in range(poison_steps): 
-
+       
         z.requires_grad_(True)
         z.grad = None
 
+        # Update theta based on current poisoned data z
         theta_new = theta_update_estimator(z, theta, eta, loss, proj_theta=proj_theta, **theta_update_kwargs)
         assert theta_new.shape == theta.shape, "Shape mismatch in theta update estimator."
 
+        # Estimate new data distribution based on updated theta
         z_new = sampling_estimator(z=z, theta=theta_new, **sampling_estimator_kwargs)
         assert z_new.shape == z.shape, f"Shape mismatch in z_new: expected {z.shape}, got {z_new.shape}."
-
+        
         l_theta = loss(z_new, theta_new).mean()        
+        
         l_theta.backward()
-
+        
         dz = z.grad
-
+        
         with torch.no_grad():
-
-            sample_mask = torch.arange(z.shape[1], device=z.device) < int(epsilon * z.shape[1])
-            dz = dz * sample_mask.unsqueeze(0)  # Only poison a fraction eps of samples
+            
+            dz = dz * sample_mask  # Only poison a fraction eps of samples
             z += poison_step_size * dz / (torch.norm(dz, dim=0, keepdim=True) + 1e-16)
             z_diff = z - z_0
-
+            
             if norm == 'l2':
                 z_diff_norm = torch.norm(z_diff, p=2, dim=0, keepdim=True) + 1e-16
                 exceed_mask = (z_diff_norm > delta).float()
-                z_diff = z_diff * (z_diff / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
-
+                z_diff = z_diff * (delta / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
+            
             elif norm == 'linf':
                 z_diff_norm = torch.max(torch.abs(z_diff), dim=0, keepdim=True)[0] + 1e-16
                 exceed_mask = (z_diff_norm > delta).float()
-                z_diff = z_diff * (z_diff / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
+                z_diff = z_diff * (delta / z_diff_norm) * exceed_mask + z_diff * (1 - exceed_mask)
 
             assert z_diff.shape == z.shape, f"Shape mismatch in z_diff: expected {z.shape}, got {z_diff.shape}."
 
@@ -78,11 +89,11 @@ def RGD_update_estimator(z, theta, eta, loss, proj_theta):
 
     theta.requires_grad_(True)
     theta.grad = None
-
+    
     # Compute loss and gradient
     l_t = loss(z, theta).mean(dim=-1)
     dL1 = torch.autograd.grad(l_t, theta, create_graph=True)[0]
-
+    
     # Update theta
     theta_new = theta - eta * dL1
 
@@ -91,9 +102,9 @@ def RGD_update_estimator(z, theta, eta, loss, proj_theta):
     return theta_new
 
 def PerfGD_update_estimator(z, theta, eta, loss, f_hat, theta_history, f_history, grad2_est, proj_theta):
-
+    
     f_t = f_hat(z) # (d,)
-
+    
     theta.requires_grad_(True)
     theta.grad = None
     l_t = loss(z, theta).mean()
@@ -104,14 +115,13 @@ def PerfGD_update_estimator(z, theta, eta, loss, f_hat, theta_history, f_history
     if len(theta_history) >= 2:  # Need at least 2 points for gradient estimation
         Theta_full = torch.stack([th for th in theta_history], dim=1)   # (p, t+1)
         F_full = torch.stack([fh for fh in f_history], dim=1)   # (q, t+1)
-
+        
         Theta = Theta_full[:, :-1]                                      # (p, t) -> 0 : t-1
         F = F_full[:, :-1]
         oneH = torch.ones(1, Theta.shape[1], device=Theta.device)
 
         delta_theta = Theta - theta.unsqueeze(1) @ oneH          # (p, t)
         delta_f = F - f_t.unsqueeze(1) @ oneH          # (q, t)
-
         df_d_theta = delta_f @ torch.linalg.pinv(delta_theta) # (p x q)
 
         dL2 = grad2_est(z, f_t, theta, df_d_theta)

@@ -1,5 +1,5 @@
 import torch
-from typing import Callable, Optional, Any
+from typing import Callable, Optional
 
 def RGD(
     D_theta: Callable,
@@ -11,6 +11,7 @@ def RGD(
     proj_theta: Callable = lambda x: x,
     poison_function: Optional[Callable] = None,
     return_losses: bool = False,
+    normalize_grad: bool = True,
     return_samples: bool = False,
     **poison_kwargs
 ):
@@ -48,6 +49,7 @@ def RGD(
     z_poisoned_last = None
     
     for t in range(max_iter):
+        
         # Draw n samples from D(theta)
         z_clean = D_theta(theta_t, n)
         
@@ -73,9 +75,13 @@ def RGD(
         dL1 = theta_t.grad
         
         with torch.no_grad():
-            # theta_t = theta_t - eta * dL1
-            theta_t = theta_t - eta * dL1 / dL1.norm()
-            theta_t = proj_theta(theta_t)
+            
+            if normalize_grad:
+                theta_t = theta_t - eta * dL1 / dL1.norm()
+            else:
+                theta_t = theta_t - eta * dL1
+            
+            theta_t = proj_theta(theta_t) # Projection 
         
         all_thetas.append(theta_t.detach().squeeze())
         
@@ -92,7 +98,7 @@ def RGD(
         result.append(z_clean_last)
         result.append(z_poisoned_last)
     
-    return tuple[Any, ...](result)
+    return result
 
 def RGD_audit(
     D_theta: Callable,
@@ -115,6 +121,7 @@ def RGD_audit(
         theta_0: Initial parameter vector
         n: Number of samples per iteration
         eta: Learning rate
+        tol: Convergence tolerance
         max_iter: Maximum number of iterations
         poison_function: Optional poisoning function
         **poison_kwargs: Additional keyword arguments for poisoning function
@@ -166,9 +173,8 @@ def RGD_audit(
         dLt = torch.autograd.functional.jacobian(lambda th: loss(z_true, th).squeeze(), theta_t)
         dLp = torch.autograd.functional.jacobian(lambda th: loss(z, th).squeeze(), theta_t)
         
-        
         M = dLt @ dLp.T
-        c = M.sum()
+        c = M.sum()/M.norm()
         convergence_metrics.append(c.item())
 
     return theta_t, all_thetas, all_losses, convergence_metrics
@@ -185,6 +191,7 @@ def PerfGD(
     max_iter: int = 100,
     poison_function: Optional[Callable] = None,
     return_losses: bool = False,
+    normalize_grad: bool = True,
     **poison_kwargs
 ):
     """
@@ -200,12 +207,9 @@ def PerfGD(
         n: Number of samples per iteration
         eta: Learning rate
         max_iter: Maximum number of iterations
-        poison_function: Optional poisoning function
-        return_losses: Whether to return the losses
-        **poison_kwargs: Additional keyword arguments for poisoning function
     
     Outputs:
-        Final theta and list of all theta values during optimization, and list of all losses during optimization
+        Final theta and list of all theta values during optimization
     """
     all_thetas = [theta_0.clone().detach().squeeze()]
     all_losses = []
@@ -236,7 +240,7 @@ def PerfGD(
                 proj_theta=proj_theta, 
                 **poison_kwargs
             )
-
+    
     f_t = f_hat(z)  # Estimate for f(theta)
 
     theta_history.append(theta_t.detach())
@@ -250,7 +254,10 @@ def PerfGD(
     dL1 = theta_t.grad
 
     with torch.no_grad():
-        theta_t = proj_theta(theta_t - eta * dL1)
+        if normalize_grad:
+            theta_t = proj_theta(theta_t - eta * dL1 / dL1.norm())
+        else:
+            theta_t = proj_theta(theta_t - eta * dL1)
 
     # Record loss on TRUE (not poisoned) distribution
     z_true = D_theta(theta_t, n)
@@ -291,6 +298,7 @@ def PerfGD(
         
         # Use entire history (not just last H steps)
         if len(theta_history) >= 2:  # Need at least 2 points for gradient estimation
+            
             Theta_full = torch.stack([th for th in theta_history], dim=1)   # (p, t+1)
             F_full = torch.stack([fh for fh in f_history], dim=1)   # (q, t+1)
             
@@ -298,7 +306,7 @@ def PerfGD(
             F = F_full[:, :-1]
             oneH = torch.ones(1, Theta.shape[1], device=Theta.device)
 
-            delta_theta = Theta - theta_t.unsqueeze(1) @ oneH          # (p, t)
+            delta_theta = Theta - theta_t.unsqueeze(1) @ oneH 
             delta_f = F - f_t.unsqueeze(1) @ oneH          # (q, t)
 
             df_d_theta = delta_f @ torch.linalg.pinv(delta_theta) # (p x q)
@@ -308,10 +316,13 @@ def PerfGD(
             dL2 = torch.zeros_like(dL1)  # No performative correction if not enough history
 
         with torch.no_grad():
-            theta_t = proj_theta(theta_t - eta * (dL1 + dL2))
+            if normalize_grad:
+                theta_t = proj_theta(theta_t - eta * (dL1 + dL2) / (dL1 + dL2).norm())
+            else:
+                theta_t = proj_theta(theta_t - eta * (dL1 + dL2))
 
         all_thetas.append(theta_t.detach().squeeze())
-        
+
         # Record loss on TRUE (not poisoned) distribution
         z_true = D_theta(theta_t, n)
         true_loss = loss(z_true, theta_t).mean()
